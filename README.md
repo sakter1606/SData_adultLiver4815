@@ -5,7 +5,7 @@ Raw data: fastq files were processed and analyzed by SAW pipeline; SAW version:v
 
 Several steps in Stereo-seq liver data analysis:
 # Quality control and Raw data (Fastq files) analysis with SAW pipeline:Saw_pipeline_stereo-seq.sh
-# QC, preproceesing, filtering,and clustering, marker genes extraction with Stereo-py pipeline;stereo_seq_Liver_4815_50binFinal.ipynb & Stereo-py_cattle4815.py
-# Seural clustering,UMAP clustering , cell type annotation with Seurat pipeline in R:StereoSeq_4815Liver-seuratPipeline_Sdata.R
+# QC, preproceesing, filtering,and clustering, marker genes extraction with Stereo-py pipeline; Stereo-py_cattle4815.py & stereo_seq_Liver_4815_50binFinal.ipynb
+# Seural clustering,UMAP clustering , cell type annotation with Seurat pipeline in R:StereoSeq_4815Liver-suratclusterMarkergenes_annotattion_Sdata.R
 # Cell type annotation with SingleR package in R:Analysis_SingleRannotation_cells_4815liver.R
 
