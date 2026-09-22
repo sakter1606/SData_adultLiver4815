@@ -53,7 +53,7 @@ library(Seurat)
 library(CellChat)
 library(patchwork)
 options(stringsAsFactors = FALSE)
-#seurat_obj<-readRDS("seurat_obj_with_celltypeB03022E1_4815Liver_150_10genefilteredParam30res0.55seurat.rds")
+#seurat_obj<-readRDS("seurat_obj_with_celltypeB03022E1_4815Liver_150_10genefilteredParam30res0.55seurat.rds")## perform exact same analysis with this data too
 seurat_obj <- readRDS("seurat_obj_with_celltype4826-9600genes_200_15filtereparam55dres0.42seurat.rds")
 # 1. Ensure your active identity is set to your cell type annotations
 Idents(seurat_obj) <- "predicted_cell_type" # Change to your actual metadata column name
