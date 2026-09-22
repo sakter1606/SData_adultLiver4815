@@ -1,0 +1,833 @@
+---
+title: "Cell_chat_HotSpot_Monocle3_Common_analysis"
+author: "Shamima Akter"
+date: "2026-09-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r}
+## CellChat analysis
+setwd("/project/uvm_mckay/shamima.akter/stereo_liver/data")
+getwd()
+library(zellkonverter)
+library(SingleCellExperiment)
+library(Seurat)
+#library(ggplot2)
+library(Matrix)
+library(dplyr)
+library(harmony)
+library(HDF5Array)
+##the best working 
+library(Seurat)
+library(CellChat)
+library(patchwork)
+options(stringsAsFactors = FALSE)
+#seurat_obj<-readRDS("seurat_obj_with_celltypeB03022E1_4815Liver_150_10genefilteredParam30res0.55seurat.rds")
+seurat_obj <- readRDS("seurat_obj_with_celltype4826-9600genes_200_15filtereparam55dres0.42seurat.rds")
+# 1. Ensure your active identity is set to your cell type annotations
+Idents(seurat_obj) <- "predicted_cell_type" # Change to your actual metadata column name
+
+# 2. Set the spatial scale factors (CRITICAL FOR STEREO-SEQ BIN50)
+spatial.factors <- data.frame(
+  ratio = 25,       # 1 Bin50 = 25 µm
+  tol = 12.5,       # Tolerance threshold (half a bin)
+  row.names = "StereoSeq" 
+)
+#head(rownames(seurat_obj_filtered))
+# 3. Create the CellChat object
+cellchat <- createCellChat(
+  object = seurat_obj,
+  group.by = "predicted_cell_type",
+  assay = "RNA",
+  #datatype = "spatial",
+  coordinates = seurat_obj@meta.data[, c("x", "y")], # Ensure these match your spatial coordinate column names
+  spatial.factors = spatial.factors
+)
+# 1. Load the database
+CellChatDB <- CellChatDB.human 
+cellchat@DB <- CellChatDB
+
+# 2. Subset to expressed genes to save memory
+cellchat <- subsetData(cellchat)
+
+# 3. Identify over-expressed genes and interactions
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+# 1. Compute probabilities
+cellchat <- computeCommunProb(
+  cellchat,
+  type = "truncatedMean", trim = 0.1,
+  distance.use = TRUE,         
+  contact.knn.k = 8,           # Assumes each bin touches 8 neighbors
+  scale.distance = 0.01        
+)
+
+# 2. Filter out noisy interactions (involving fewer than 10 cells)
+#cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+# 3. Compute pathways and aggregate the entire network
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+# 1. Calculate network centrality (required for plotting)
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP")
+
+# 2. Generate the Circle Plot
+# The 'weight.scale = TRUE' makes the line thickness proportional to interaction strength.
+# The 'vertex.weight' makes the circle size proportional to the number of cells in that group.
+#groupSize <- as.numeric(table(cellchat@idents))
+
+pathways <- cellchat@netP$pathways
+print(pathways)
+
+
+groupSize <- as.numeric(table(cellchat@idents)) # Get cell counts for node size
+names(groupSize) <- levels(cellchat@idents)
+
+netVisual_circle(cellchat@net$count, 
+                 vertex.weight = groupSize, 
+                 weight.scale = TRUE, 
+                 label.edge = FALSE,, 
+                 title.name = "Number of interactions")
+
+# Plot ONLY the interactions originating from or targeting Cholangiocytes
+netVisual_circle(cellchat@net$count, 
+                 vertex.weight = groupSize, 
+                 weight.scale = TRUE, 
+                 label.edge = FALSE, 
+                 sources.use = "Cholangiocytes", # The cell sending the signal
+                 targets.use = "Cholangiocytes", # The cell receiving the signal
+                 title.name = "Cholangiocyte Interaction Network")
+netVisual_circle(cellchat@net$count, 
+                 vertex.weight = groupSize, 
+                 weight.scale = TRUE, 
+                 label.edge = FALSE, 
+                 sources.use = "Hepatocytes", # The cell sending the signal
+                 targets.use = "Hepatocytes", # The cell receiving the signal
+                 title.name = "Hepatocytes Interaction Network")
+
+netVisual_circle(
+  cellchat@net$count,
+  vertex.weight = groupSize,
+  weight.scale = TRUE,
+  label.edge = FALSE,
+  title.name = "Number of interactions"
+)
+cellchat@idents
+
+table(cellchat@idents)
+#graphics.off()
+groupSize <- as.numeric(table(cellchat@idents))
+names(groupSize) <- levels(cellchat@idents)
+netVisual_circle(
+  cellchat@net$count,
+  vertex.weight = groupSize,
+  weight.scale = TRUE,
+  label.edge = FALSE,
+  title.name = "Number of interactions"
+)
+
+```
+
+```{r}
+##Hotspot Workflow
+############################################################
+# Hotspot workflow for Stereo-seq liver Seurat object
+# Runs from RStudio using reticulate + Python hotspot
+## Outputs:
+# 1) module heatmap
+# 2) module-by-celltype heatmap
+# 3) spatial maps for top modules
+# 4) module gene-network plots
+# 5) GO enrichment table per module
+############################################################
+##
+#!/usr/bin/env Rscript
+#.libPaths("/project/uvm_mckay/shamima.akter/stereo_liver/R/RStudio-x86_64-pc-linux-gnu-library/4.4")
+setwd("/project/uvm_mckay/shamima.akter/stereo_liver/data")
+getwd()
+library(zellkonverter)
+library(SingleCellExperiment)
+library(Seurat)
+#library(ggplot2)
+library(Matrix)
+library(dplyr)
+library(harmony)
+library(HDF5Array)
+library(reticulate)
+library(anndata)
+############################
+# 1. USER SETTINGS
+############################
+seurat_rds   <- "seurat_obj_with_celltypeB03022E1_4815Liver_150_10genefilteredParam30res0.55seurat.rds"
+assay_use    <- "RNA"              # use normalized/raw RNA assay, not integrated
+slot_use     <- "counts"           # raw counts for Hotspot
+celltype_col <- "predicted_cell_type"        # metadata column with cell types
+x_col        <- "x"                # metadata x coordinate
+y_col        <- "y"                # metadata y coordinate
+
+# Hotspot parameters
+n_neighbors       <- 30
+hotspot_model     <- "danb"
+autocorr_fdr      <- 0.05
+min_gene_threshold <- 20
+core_only         <- TRUE
+
+# plotting
+top_n_modules_to_map <- 16
+top_n_modules_network <- 3
+top_terms_per_module <- 8
+outdir_4815 <- "hotspot2_results_4815"
+dir.create(outdir_4815, showWarnings = FALSE, recursive = TRUE)
+
+############################
+# 2. LOAD SEURAT OBJECT
+############################
+seu <- readRDS(seurat_rds)
+
+if (!(assay_use %in% Assays(seu))) {
+  stop("Assay not found: ", assay_use)
+}
+DefaultAssay(seu) <- assay_use
+
+required_cols <- c(celltype_col, x_col, y_col)
+missing_cols <- setdiff(required_cols, colnames(seu@meta.data))
+if (length(missing_cols) > 0) {
+  stop("Missing metadata columns: ", paste(missing_cols, collapse = ", "))
+}
+
+# clean metadata
+meta <- seu@meta.data %>%
+  mutate(
+    .cell = colnames(seu),
+    .celltype = trimws(as.character(.data[[celltype_col]])),
+    .x = suppressWarnings(as.numeric(gsub(",", "", trimws(as.character(.data[[x_col]]))))),
+    .y = suppressWarnings(as.numeric(gsub(",", "", trimws(as.character(.data[[y_col]])))))
+  ) %>%
+  dplyr::select(.cell, .celltype, .x, .y)
+
+keep <- is.finite(meta$.x) & is.finite(meta$.y) & !is.na(meta$.celltype) & meta$.celltype != ""
+meta <- meta[keep, , drop = FALSE]
+seu  <- subset(seu, cells = meta$.cell)
+
+Idents(seu) <- factor(meta$.celltype)
+
+# counts matrix: genes x cells
+counts <- GetAssayData(seu, assay = assay_use, slot = slot_use)
+counts <- counts[, meta$.cell, drop = FALSE]
+
+# remove genes with all-zero counts
+gene_keep <- Matrix::rowSums(counts) > 0
+counts <- counts[gene_keep, , drop = FALSE]
+
+message("Cells kept: ", ncol(counts))
+message("Genes kept: ", nrow(counts))
+#library(reticulate)
+############################
+# 3. SET UP PYTHON / HOTSPOT
+############################
+# Create/use your existing Python env manually if preferred:
+#use_condaenv("hotspot_env", required = TRUE)
+
+# Example setup commands to run ONCE in R if needed:
+#reticulate::conda_create("hotspot_env", packages = "python=3.10")
+#reticulate::conda_install("hotspot_env",
+#packages = c("pip", "numpy", "pandas", "scipy", "anndata"),
+#pip = FALSE
+#)
+##other way to get hotspotenv
+# reticulate::py_install("hotspotsc", envname = "hotspot_env", pip = TRUE)
+############################
+##Then restart R
+
+# declare Python packages before import()
+py_require(c(
+  "hotspotsc",
+  "anndata",
+  "numpy",
+  "pandas",
+  "scipy"
+))
+library(reticulate)
+# optional: see what reticulate plans to use
+py_config()
+
+# now import ## Neeed to get all these libraries below for the analysis
+hotspot <- import("hotspot")
+anndata <- import("anndata")
+np <- import("numpy")
+pd <- import("pandas")
+scipy_sparse <- import("scipy.sparse")
+
+############################
+############################
+# 4. BUILD ANNData FOR HOTSPOT
+############################
+# Hotspot v1+ expects AnnData and can use spatial coordinates
+# as the metric via latent_obsm_key. Counts should be cells x genes.
+# We keep raw counts in adata.layers['counts'] and store total counts in obs.
+# Documented workflow: create object, create_knn_graph, compute_autocorrelations,
+# compute_local_correlations, create_modules, calculate_module_scores.
+# counts matrix from Seurat: genes x cells
+expr_mat <- GetAssayData(seu, assay = assay_use, slot = "counts")
+
+# subset to cells kept in metadata
+expr_mat <- expr_mat[, meta$.cell, drop = FALSE]
+
+# remove zero-count genes
+expr_mat <- expr_mat[Matrix::rowSums(expr_mat) > 0, , drop = FALSE]
+
+message("Expression matrix class: ", class(expr_mat))
+message("Expression matrix dim: ", paste(dim(expr_mat), collapse = " x "))
+
+# convert to dense then transpose for AnnData / Hotspot
+expr_dense <- as.matrix(expr_mat)
+expr_t <- t(expr_dense)   # now cells x genes
+
+# scipy sparse matrix
+counts_csr <- scipy_sparse$csr_matrix(expr_t)
+#counts_csr <- scipy_sparse$csr_matrix(t(as.matrix(counts)))  # cells x genes
+
+# create AnnData
+adata <- anndata$AnnData(X = counts_csr)
+adata$obs_names <- as.list(colnames(expr_mat))
+adata$var_names <- as.list(rownames(expr_mat))
+
+# raw counts layer
+adata$layers["counts"] <- counts_csr
+adata <- anndata$AnnData(X = counts_csr)
+#adata$obs_names <- as.list(colnames(counts))
+#adata$var_names <- as.list(rownames(counts))
+adata$obs_names <- as.list(colnames(expr_mat))
+adata$var_names <- as.list(rownames(expr_mat))
+
+# add raw counts layer explicitly
+adata$layers["counts"] <- counts_csr
+celltype = as.character(meta$.predicted_cell_type)
+# obs metadata
+obs_df <- pd$DataFrame(
+  dict(
+    total_counts = as.numeric(Matrix::colSums(expr_mat)),
+    celltype = as.character(meta$.celltype)
+  ),
+  index = as.list(colnames(expr_mat))
+)
+adata$obs <- obs_df
+adata$obs <- obs_df
+
+# spatial coordinates in obsm
+coords_mat <- as.matrix(meta[, c(".x", ".y")])
+storage.mode(coords_mat) <- "double"
+adata$obsm["spatial"] <- coords_mat
+
+############################
+# 5. RUN HOTSPOT
+############################
+hs <- hotspot$Hotspot(
+  adata,
+  layer_key = "counts",
+  model = hotspot_model,
+  latent_obsm_key = "spatial",
+  umi_counts_obs_key = "total_counts"
+)
+
+hs$create_knn_graph(
+  weighted_graph = FALSE,
+  n_neighbors = as.integer(n_neighbors)
+)
+
+# gene autocorrelations
+hs_results_py <- hs$compute_autocorrelations()
+hs_results <- py_to_r(hs_results_py)
+hs_results$gene <- rownames(hs_results)
+
+write.csv(hs_results,
+          file.path(outdir_4815, "hotspot_gene_autocorrelations_liver4815.csv"),
+          row.names = FALSE)
+
+sig_genes <- hs_results %>%
+  filter(FDR < autocorr_fdr) %>%
+  arrange(FDR) %>%
+  pull(gene)
+
+message("Significant Hotspot genes: ", length(sig_genes))
+
+if (length(sig_genes) < min_gene_threshold) {
+  stop("Too few significant genes for module detection. Try relaxing autocorr_fdr.")
+}
+
+# local correlations
+lcz_py <- hs$compute_local_correlations(sig_genes)
+lcz <- py_to_r(lcz_py)
+
+# create modules
+mods_py <- hs$create_modules(
+  min_gene_threshold = as.integer(min_gene_threshold),
+  core_only = core_only,
+  fdr_threshold = autocorr_fdr
+)
+modules <- py_to_r(mods_py)
+modules <- data.frame(
+  gene = names(modules),
+  module = as.integer(modules),
+  stringsAsFactors = FALSE
+)
+
+# remove unassigned genes (-1)
+modules_use <- modules %>% filter(module >= 0)
+
+write.csv(modules,
+          file.path(outdir_4815, "hotspot_modules_4815.csv"),
+          row.names = FALSE)
+
+# module scores: cells x modules
+module_scores_py <- hs$calculate_module_scores()
+module_scores <- py_to_r(module_scores_py)
+module_scores <- as.data.frame(module_scores)
+module_scores$.cell <- rownames(module_scores)
+
+# clean module column names
+colnames(module_scores) <- gsub("^X", "M", colnames(module_scores))
+if (!".cell" %in% colnames(module_scores)) colnames(module_scores)[ncol(module_scores)] <- ".cell"
+
+write.csv(module_scores,
+          file.path(outdir_4815, "hotspot_module_scores_4815.csv"),
+          row.names = FALSE)
+
+############################
+# 6. ADD MODULE SCORES TO SEURAT
+############################
+score_cols <- setdiff(colnames(module_scores), ".cell")
+#score_mat <- module_scores %>%
+  #tibble::column_to_rownames(".cell") %>%
+  #as.matrix()
+module_scores <- as.data.frame(module_scores)
+rownames(module_scores) <- NULL
+
+score_mat <- module_scores %>%
+  tibble::column_to_rownames(".cell") %>%
+  as.matrix()
+
+
+# ensure cells align
+score_mat <- score_mat[colnames(seu), , drop = FALSE]
+seu <- AddMetaData(seu, metadata = as.data.frame(score_mat))
+
+############################
+# 7. PANEL A: MODULE HEATMAP + GO TERMS
+############################
+# select genes ordered by module and z-score
+modules_ordered <- modules_use %>%
+  left_join(hs_results %>% dplyr::select(gene, Z), by = "gene") %>%
+  arrange(module, desc(Z))
+
+genes_heat <- modules_ordered$gene
+expr_heat <- GetAssayData(seu, assay = assay_use, slot = "data")[genes_heat, , drop = FALSE]
+expr_heat <- as.matrix(expr_heat)
+
+# z-score by gene
+expr_heat_z <- t(scale(t(expr_heat)))
+expr_heat_z[is.na(expr_heat_z)] <- 0
+
+# optionally subsample cells for plotting
+set.seed(1)
+max_cells_heat <- min(3000, ncol(expr_heat_z))
+cells_heat <- sample(colnames(expr_heat_z), max_cells_heat)
+expr_heat_z <- expr_heat_z[, cells_heat, drop = FALSE]
+
+row_split <- factor(modules_ordered$module, levels = sort(unique(modules_ordered$module)))
+module_colors <- structure(
+  colorRampPalette(c("#3b4cc0", "#1fa187", "#fde725", "#d7191c"))(length(unique(row_split))),
+  names = sort(unique(row_split))
+)
+
+#pdf(file.path(outdir, "PanelA_module_heatmap.pdf"), width = 12, height = 10)
+ht <- Heatmap(
+  expr_heat_z,
+  name = "Z-scores",
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_names = FALSE,
+  show_column_names = FALSE,
+  row_split = row_split,
+  row_title = NULL,
+  col = colorRamp2(c(-2, 0, 2), c("#3b4cc0", "white", "#b40426"))
+)
+draw(ht)
+
+#dev.off()
+
+ggsave(filename = file.path(outdir_4815,"PanelA_module_heatmap_4815.png"),
+       ht,
+       width = 6, height = 5, dpi = 600)
+
+
+############################
+# 8. GO ENRICHMENT PER MODULE
+############################
+go_list <- list()
+
+for (m in sort(unique(modules_use$module))) {
+  genes_m <- modules_use %>% filter(module == m) %>% pull(gene)
+  
+  # map SYMBOL -> ENTREZID for cattle
+  gene_map <- suppressMessages(
+    bitr(genes_m,
+         fromType = "SYMBOL",
+         toType = "ENTREZID",
+         OrgDb = org.Bt.eg.db)
+  )
+  
+  if (!is.null(gene_map) && nrow(gene_map) > 0) {
+    ego <- suppressMessages(
+      enrichGO(
+        gene          = unique(gene_map$ENTREZID),
+        OrgDb         = org.Bt.eg.db,
+        ont           = "BP",
+        pAdjustMethod = "BH",
+        readable      = TRUE
+      )
+    )
+    
+    if (!is.null(ego) && nrow(as.data.frame(ego)) > 0) {
+      ego_df <- as.data.frame(ego) %>%
+        mutate(module = paste0("M", m))
+      go_list[[paste0("M", m)]] <- ego_df
+    }
+  }
+}
+
+go_df <- bind_rows(go_list)
+write.csv(go_df, file.path(outdir_4815, "module_GO_enrichment_4815.csv"), row.names = FALSE)
+
+# optional GO text summary for plotting/inspection
+go_top <- go_df %>%
+  group_by(module) %>%
+  slice_head(n = top_terms_per_module) %>%
+  ungroup()
+write.csv(go_top, file.path(outdir_4815, "module_GO_top_terms_4815.csv"), row.names = FALSE)
+##these data can be used to generate other results based in specific interests
+```
+
+```{r}
+
+## Moniocle3Analysis : pseudotime calculation for PV to CV in liver stereo-seq data
+setwd("/project/uvm_mckay/shamima.akter/stereo_liver/data")
+getwd()
+library(Seurat)
+library(SeuratWrappers)
+library(monocle3)
+#library(ggplot2)
+library(dplyr)
+library(viridis)
+
+# =========================
+# 1. Load Seurat object
+# =========================
+
+##seurat_obj <- readRDS("seurat_obj_with_celltypeB03022E1_4815Liver_150_10genefilteredParam30res0.55seurat.rds")
+seurat_obj <- readRDS("seurat_obj_with_celltype4826-9600genes_200_15filtereparam55dres0.42seurat.rds")
+#seurat_obj_with_celltype4826-9600genes_200_15filtereparam55dres0.42seurat.rds
+# Check metadata column
+table(seurat_obj$predicted_cell_type)
+
+# =========================
+# 2. Subset hepatocytes only
+# =========================
+
+hep_sub <- subset(
+  seurat_obj,
+  subset = predicted_cell_type == "Hepatocytes"
+)
+
+# Check number of hepatocytes
+dim(hep_sub)
+table(hep_sub$predicted_cell_type)
+
+# =========================
+# 3. Standard Seurat processing
+# =========================
+
+DefaultAssay(hep_sub) <- "RNA"
+
+hep_sub <- NormalizeData(hep_sub)
+
+hep_sub <- FindVariableFeatures(
+  hep_sub,
+  selection.method = "vst",
+  nfeatures = 3000
+)
+
+hep_sub <- ScaleData(hep_sub)
+hep_sub <- RunPCA(hep_sub, npcs = 30)
+
+# Use dims based on elbow plot; usually 1:15 or 1:20
+ElbowPlot(hep_sub)
+
+hep_sub <- RunUMAP(
+  hep_sub,
+  dims = 1:15,
+  n.neighbors = 30,
+  min.dist = 0.3
+)
+
+# =========================
+# 4. Define PV and CV marker genes
+# =========================
+
+pv_genes <- c("PCK1", "ASS1", "CPS1", "HAMP")
+cv_genes <- c("CYP2E1", "GLUL", "CYP1A2", "SLC10A1")
+
+# Keep only genes present in object
+pv_genes <- intersect(pv_genes, rownames(hep_sub))
+cv_genes <- intersect(cv_genes, rownames(hep_sub))
+
+pv_genes
+cv_genes
+
+# Stop if too few markers found
+if (length(pv_genes) < 2) stop("Too few PV genes found in object.")
+if (length(cv_genes) < 2) stop("Too few CV genes found in object.")
+
+# =========================
+# 5. Add PV/CV module scores
+# =========================
+
+hep_sub <- AddModuleScore(
+  hep_sub,
+  features = list(pv_genes),
+  name = "PV_Score"
+)
+
+hep_sub <- AddModuleScore(
+  hep_sub,
+  features = list(cv_genes),
+  name = "CV_Score"
+)
+
+# Higher = more PV-like
+hep_sub$zonation_score <- hep_sub$PV_Score1 - hep_sub$CV_Score1
+
+# =========================
+# 6. Assign three broad zones
+# =========================
+
+hep_sub$Zone <- cut(
+  hep_sub$zonation_score,
+  breaks = quantile(
+    hep_sub$zonation_score,
+    probs = c(0, 0.33, 0.66, 1),
+    na.rm = TRUE
+  ),
+  labels = c("CV_Hepatocytes", "Midzone", "PV_Hepatocytes"),
+  include.lowest = TRUE
+)
+
+#Plot hepatocyte zones before Monocle
+
+##This checks whether your PV/CV/Midzone assignment looks reasonable.
+
+#library(Seurat)
+#library(ggplot2)
+
+hep_sub$Zone <- factor(
+  hep_sub$Zone,
+  levels = c("PV_Hepatocytes", "Midzone", "CV_Hepatocytes")
+)
+
+table(hep_sub$Zone)
+library(ggplot2)
+p_zone <- DimPlot(
+  hep_sub,
+  reduction = "umap",
+  group.by = "Zone",
+  pt.size = 0.8,
+  shuffle = TRUE,
+  raster = FALSE
+) +
+  scale_color_manual(
+    values = c(
+      "PV_Hepatocytes" = "#1B9E77",  # green
+      "Midzone" = "#7570B3",         # purple/blue
+      "CV_Hepatocytes" = "#D95F02"   # orange/red
+    )
+  ) +
+  labs(
+    title = "Hepatocyte zonation clusters",
+    x = "UMAP 1",
+    y = "UMAP 2",
+    color = NULL
+  ) +
+  theme_classic(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", color = "black"),
+    axis.text.y = element_text(size = 16, face = "bold", color = "black"),
+    legend.text = element_text(size = 16, face = "bold"),
+    axis.line = element_line(linewidth = 1.1, color = "black")
+  )
+
+p_zone
+
+##save  the plot
+#the plot is not the write plot
+#Convert hepatocytes to Monocle3 object
+```
+```{r}
+cds <- as.cell_data_set(hep_sub)
+
+# Transfer UMAP coordinates from Seurat to Monocle
+reducedDims(cds)$UMAP <- Embeddings(hep_sub, "umap")
+
+# Make sure Zone exists in cds
+colData(cds)$Zone <- hep_sub$Zone
+
+##Run Monocle3 trajectory
+cds <- cluster_cells(
+  cds,
+  reduction_method = "UMAP"
+)
+
+cds <- learn_graph(
+  cds,
+  use_partition = TRUE
+)
+##Correct root node selection using PV hepatocytes
+get_earliest_principal_node <- function(cds, column_name, cluster_name) {
+  
+  cell_ids <- which(colData(cds)[, column_name] == cluster_name)
+  
+  if (length(cell_ids) == 0) {
+    stop(paste("No cells found for", cluster_name))
+  }
+  
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[
+    as.numeric(names(which.max(table(closest_vertex[cell_ids, ]))))
+  ]
+  
+  return(root_pr_nodes)
+}
+
+root_node <- get_earliest_principal_node(
+  cds,
+  column_name = "Zone",
+  cluster_name = "PV_Hepatocytes"
+)
+
+root_node
+
+cds <- order_cells(
+  cds,
+  root_pr_nodes = root_node
+)
+###Plot 1: PV–CV trajectory with zones
+p_traj_zone <- plot_cells(
+  cds,
+  color_cells_by = "Zone",
+  label_cell_groups = FALSE,
+  label_leaves = FALSE,
+  label_branch_points = FALSE,
+  label_roots = TRUE,
+  cell_size = 0.8,
+  graph_label_size = 3
+) +
+  scale_color_manual(
+    name = "Liver zone",
+    values = c(
+      "PV_Hepatocytes" = "#1B9E77",
+      "Midzone" = "#7570B3",
+      "CV_Hepatocytes" = "#D95F02"
+    )
+  ) +
+  labs(
+    title = "Hepatocyte zones with PV trajectory origin",
+    x = "UMAP 1",
+    y = "UMAP 2"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 18, face = "bold"),
+    axis.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 16, face = "bold")
+    
+  )
+
+
+p_traj_zone
+##save the data
+#ggsave(
+ # "4815_hepatocyte_PV_CV_trajectory_zone.svg",
+  #p_traj_zone,
+  #width = 8,
+  #height = 6,
+ # dpi = 600,
+ #### #compression = "lzw"
+#)
+
+##Plot 2: Pseudotime gradient
+p_pseudotime <- plot_cells(
+  cds,
+  color_cells_by = "pseudotime",
+  label_cell_groups = FALSE,
+  label_leaves = FALSE,
+  label_branch_points = FALSE,
+  label_roots = TRUE,
+  cell_size = 0.8,
+  graph_label_size = 3
+) +
+  scale_color_viridis_c(option = "plasma", name = "Pseudotime") +
+  labs(
+    title = "Porto-central hepatocyte pseudotime",
+    x = "UMAP 1",
+    y = "UMAP 2"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(),
+    axis.title = element_text(),
+    axis.text = element_text(),
+    legend.title = element_text(),
+    legend.text = element_text()
+  )
+p_pseudotime
+##save the data
+
+```

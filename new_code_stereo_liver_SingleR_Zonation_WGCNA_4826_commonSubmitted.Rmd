@@ -1,0 +1,2264 @@
+---
+title: "new_code_stereo_liver_SingleR_Zonation_WGCNA_4826_all"
+author: "Shamima Akter"
+date: "2026-09-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.\
+```{r}
+
+##Figure1-Figur4 & FigureS1-S4 (all zonation spatial plots & visualization, nonparenchymal cell zonation analysis)           
+## loading R packages or libraries
+
+setwd("/project/uvm_mckay/shamima.akter/stereo_liver/data")
+getwd()
+
+library(zellkonverter)
+library(SingleCellExperiment)
+library(Seurat)
+#library(ggplot2)
+library(Matrix)
+library(dplyr)
+library(harmony)
+library(HDF5Array)
+library(anndata)
+library(reticulate)
+sce <- readH5AD(
+  "4826_RefannotationF.h5ad",
+  reader = "R",
+  use_hdf5 = FALSE
+)
+
+sce## read stereo-seq data in .h5ad format
+
+if (!"logcounts" %in% assayNames(sce)) {
+  logcounts(sce) <- log1p(assay(sce, "X"))
+}
+#hep@meta.data$
+# 3. Convert to Seurat object
+seurat_obj <- as.Seurat(sce, counts = "X", data = "logcounts")
+#seurat_obj
+
+saveRDS(seurat_obj,file = "seurat_objF_celltype_singleRanno_4826_all.rds") ##final dataset for 4826
+#df <- as.data.frame(colData(seurat_obj))
+##how to convert the seurat_obj to .h5ad format
+# 2. Convert Seurat object to a SingleCellExperiment object
+sce_obj <- as.SingleCellExperiment(seurat_obj)
+
+# 3. Write the SCE object to an .h5ad file
+writeH5AD(sce_obj, file = "seurat_objF_celltype_singleRanno_4826_all.h5ad")
+writeH5AD(seurat_obj,seurat_objF_celltype_singleRanno_4826_all.h5ad)
+##saveRDS(seurat_obj,file = "seurat_obj_celltype_singleRanno_4815_all.rds")##final dataset for 4815
+##Zonation calculation
+Assays(seurat_obj)
+seurat_obj@meta.data$cell_type
+table(seurat_obj@meta.data$cell_type)
+DefaultAssay(seurat_obj) <- "originalexp"
+seurat_obj[["RNA"]] <- seurat_obj[["originalexp"]]
+#seurat_obj[["originalexp"]] <- NULL
+DefaultAssay(seurat_obj) <- "RNA"
+periportal_markers  <- c("CPS1","ASS1","HAL","PCK1")
+pericentral_markers <- c("GLUL","CYP2E1","CYP1A2","AXIN2")
+pp_present <- intersect(periportal_markers, rownames(seurat_obj))
+pc_present <- intersect(pericentral_markers, rownames(seurat_obj))
+
+pp_present
+pc_present
+
+length(pp_present); length(pc_present)
+
+#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds")
+
+seurat_obj <- AddModuleScore(
+  seurat_obj,
+  features = list(pp_present),
+  name = "periportal_score",
+  nbin = 10   # try 10, if still fails try 5
+)
+
+seurat_obj <- AddModuleScore(
+  seurat_obj,
+  features = list(pc_present),
+  name = "pericentral_score",
+  nbin = 10
+)
+seurat_obj$zonation_axis <- seurat_obj$pericentral_score1 - seurat_obj$periportal_score1
+
+seurat_obj$zonation_pt <- (seurat_obj$zonation_axis - min(seurat_obj$zonation_axis)) /
+  (max(seurat_obj$zonation_axis) - min(seurat_obj$zonation_axis))
+
+seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4815_all.rds") ## saving the seurat object after creating and calculating zonation, then in 2nd part spatial visualization 
+#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds")
+#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds")
+## do the same for any cell type or 
+hep <- subset(seurat_obj, subset = cell_type == "Hepatocytes")
+Assays(hep)
+DefaultAssay(hep) <- "RNA"   # or "SCT" if you prefer, but use log-normalized for zonation
+hep
+#periportal  <- list(c("CPS1","ASS1","HAL","PCK1"))
+#pericentral <- list(c("GLUL","CYP2E1","CYP1A2","AXIN2"))
+
+#hep <- AddModuleScore(hep, features = periportal,  name = "periportal_score")
+#hep <- AddModuleScore(hep, features = pericentral, name = "pericentral_score")
+#seurat_obj@meta.data$zonation_pt
+# Seurat appends "1" to the score names
+#hep$zonation_axis <- hep$pericentral_score1 - hep$periportal_score1
+```
+```{r}
+
+library(ggplot2)
+library(viridis)
+library(scales)
+library(patchwork)
+#Spatial Visualization of gene
+plot_spatial_gene <- function(
+    seurat_obj,
+    gene,
+    x = "x",
+    y = "y",
+    pt_size = 0.15,
+    title = NULL,
+    expr_min = 0,
+    expr_max = NULL
+) {
+  
+  df <- FetchData(seurat_obj, vars = c(x, y, gene))
+  colnames(df) <- c("x", "y", "expr")
+  
+  ggplot(df, aes(x = x, y = y, color = expr)) +
+    geom_point(size = pt_size) +
+    scale_y_reverse() +
+    coord_fixed() +
+    scale_color_viridis_c(
+      option = "magma",
+      limits = c(expr_min, expr_max),
+      oob = scales::squish,
+      breaks = pretty(c(expr_min, expr_max), n = 5),
+      name = gene
+    ) +
+    theme_void() +
+    labs(
+      title = ifelse(is.null(title), gene, title)
+    ) +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 10, face = "bold.italic"),
+      legend.title = element_text(hjust = 0.5, size = 10, face = "bold.italic"),
+      legend.text  = element_text(hjust = 0.5, size = 10, face = "bold")
+    )
+}
+genes <- c("CPS1", "ASS1", "PCK1", "HAL")
+expr_all <- FetchData(seurat_obj, vars = genes)
+
+shared_max <- quantile(
+  as.matrix(expr_all),
+  probs = 0.99,
+  na.rm = TRUE
+)
+#shared_max
+
+p1 <- plot_spatial_gene(seurat_obj, "CPS1", expr_min = 0, expr_max = shared_max)
+p2 <- plot_spatial_gene(seurat_obj, "ASS1", expr_min = 0, expr_max = shared_max)
+p3 <- plot_spatial_gene(seurat_obj, "PCK1", expr_min = 0, expr_max = shared_max)
+p4 <- plot_spatial_gene(seurat_obj, "HAL",  expr_min = 0, expr_max = shared_max)
+
+final_plot <- (p1 + p2) / (p3 + p4) +
+  
+      theme(
+         #title = "Periportal marker localization",
+      plot.title = element_text(
+        size = 20,
+        face = "bold",
+        hjust = 0.5
+      )
+    )
+
+final_plot
+
+```
+```{r}
+
+seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4815_all.rds")
+genes <- c("GLUL", "CYP2E1", "CYP1A2", "SLC10A1") 
+#genes <- c("ALB", "ORMI", "FGA", "APOA1","APOA2","CTNNBIP1")
+
+expr_all <- FetchData(seurat_obj, vars = genes)
+shared_max <- quantile(
+  as.matrix(expr_all),
+  probs = 0.99,
+  na.rm = TRUE
+)
+p1 <- plot_spatial_gene(seurat_obj, "GLUL", expr_min = 0, expr_max = shared_max)
+p2 <- plot_spatial_gene(seurat_obj, "CYP2E1", expr_min = 0, expr_max = shared_max)
+p3 <- plot_spatial_gene(seurat_obj, "CYP1A2", expr_min = 0, expr_max = shared_max)
+p4 <- plot_spatial_gene(seurat_obj, "SLC10A1",expr_min = 0, expr_max = shared_max)
+
+p1 <- plot_spatial_gene(seurat_obj, "ALB", expr_min = 0, expr_max = shared_max)
+p2 <- plot_spatial_gene(seurat_obj, "ORM1", expr_min = 0, expr_max = shared_max)
+p3 <- plot_spatial_gene(seurat_obj, "FGA", expr_min = 0, expr_max = shared_max)
+p4 <- plot_spatial_gene(seurat_obj, "APOA1",expr_min = 0, expr_max = shared_max)
+p5 <- plot_spatial_gene(seurat_obj, "APOA2",expr_min = 0, expr_max = shared_max)
+p6 <- plot_spatial_gene(seurat_obj, "CTNNBIP1",expr_min = 0, expr_max = shared_max)
+
+
+
+    ### do the same for pericentral, and marker gene spatial localization
+  final_plot <- (p1 + p2) / (p3 + p4) +
+    theme(
+      title = "Pericentral_ markergene_localization",
+      plot.title = element_text(
+        size = 14,
+        face = "bold",
+        hjust = 0.5
+      )
+    )
+
+  final_plot <- (p1 + p2) / (p3 + p4) +
+    theme(
+      title = "Marker genes localization_4826",
+      plot.title = element_text(
+        size = 20,
+        face = "bold",
+        hjust = 0.5
+      )
+    )
+  
+final_plot
+ggsave(
+  "Periportal_markers_same_scale_4826.tiff",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+##final_plot
+plot <- (p5+p6)
+plot
+##save the data appropriately
+ggsave(
+  "Marker genes localization_4815.tiff",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+ggsave(
+  "Marker genes localization_4815.svg",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+ggsave(
+  "Pericentral_markers_same_scale_4815.tiff",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  compression = "lzw"
+)
+ggsave(
+  "Pericentral_markers_same_scale_4815.svg",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+
+
+
+ggsave(
+  "Periportal_markers_same_scale_4826.tiff",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+ggsave(
+  "Periportal_markers_same_scale_4815.svg",
+  plot = final_plot,
+  width = 10,
+  height = 7,
+  dpi = 600,
+  #compression = "lzw"
+)
+```
+
+```{r}
+
+library(patchwork)
+
+##other way to do this
+genes<-c("ALB","ORM1","FGA","SLC10A1","APOA1","APOA2")
+ 
+#p <- wrap_plots(
+ # lapply(genes, function(g) plot_spatial_gene(hep, g, x=coord_x, y=coord_y)),
+ # ncol = 2
+#) + plot_annotation(title = "Marker_genes",face="bold")
+
+#p
+p <- wrap_plots(
+  lapply(genes, function(g) plot_spatial_gene(seurat_obj, g, x=coord_x, y=coord_y)),
+  ncol = 2
+) #+ plot_annotation(title = "Marker_genes")
+
+p <- wrap_plots(
+  lapply(genes, function(g) plot_spatial_gene(hep, g, x=coord_x, y=coord_y)),
+  ncol = 2
+) #+ plot_annotation(title = "Marker_genes",face="bold")
+
+p
+
+p
+#ggsave("Spatial_HighExpgenes_4826.png", p, width = 10, height = 8, dpi = 300)
+p <- plot_spatial_gene(seurat_obj,"ALB")   # use a gene you know exists
+p <- plot_spatial_gene(seurat_obj,"CTNNBIP1")   # use a gene you know exists
+print(p)
+periportal_genes <- c("CPS1", "ASS1", "PCK1", "HAL")  # edit to match your data
+pA <- wrap_plots(
+  lapply(periportal_genes, function(g) plot_spatial_gene(hep, g, x=coord_x, y=coord_y)),
+  ncol = 2
+) + 
+  plot_annotation(title = "Periportal marker localization")
+
+pA <- wrap_plots(
+  lapply(periportal_genes, function(g) plot_spatial_gene(seurat_obj, g, x=coord_x, y=coord_y)),
+ ncol = 2
+) + plot_annotation(title = "Periportal marker localization")
+
+#pA <- wrap_plots(
+  #lapply(periportal_genes, function(g) plot_spatial_gene(seurat_obj = , g, x=coord_x, y=coord_y)),
+  #ncol = 2
+#) + plot_annotation(title = "A. Periportal marker localization")
+
+pA
+pericentral_genes <- c("GLUL", "CYP2E1", "CYP1A2", "AXIN2")  # edit to match your data
+
+pB <- wrap_plots(
+  lapply(pericentral_genes, function(g) plot_spatial_gene(hep, g, x=coord_x, y=coord_y)),
+  ncol = 2
+) + plot_annotation(title = "B. Pericentral marker localization")
+
+```
+```{r}
+##Spatial Visualization , corrected would be normal no conversion, cv=9, PV=1 verified on 06/05/2026
+
+##This is correct
+seurat_obj$zone9 <- cut(
+  seurat_obj$zonation_pt,
+  breaks = seq(min(seurat_obj$zonation_pt, na.rm=TRUE),
+               max(seurat_obj$zonation_pt, na.rm=TRUE),
+               length.out = 4),
+  include.lowest = TRUE,
+  labels = paste0("Bin", 1:3)
+)
+seurat_obj$zone9 <- cut(
+  seurat_obj$zonation_pt,
+  breaks = seq(min(seurat_obj$zonation_pt, na.rm=TRUE),
+               max(seurat_obj$zonation_pt, na.rm=TRUE),
+               length.out = 10),
+  include.lowest = TRUE,
+  labels = paste0("Bin", 1:9)
+)
+df9 <- seurat_obj@meta.data %>%
+  dplyr::select(x, y, zone9) %>%
+  dplyr::filter(is.finite(x), is.finite(y), !is.na(zone9))
+
+df9$zone9_num <- as.integer(gsub("Bin", "", df9$zone9))
+
+ggplot(df9, aes(x, y, color = zone9_num)) +
+  geom_point(size = 2.0) +
+  coord_fixed() +
+  theme_void() +
+  theme(
+    plot.title = element_text(
+      size = 10,
+      face = "bold",
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      size = 10,
+      face = "bold"
+    ),
+    legend.text = element_text(
+      size = 10,
+      face = "bold"
+    ),
+    panel.grid = element_blank()
+  ) +
+  #scale_color_viridis_c(
+  #breaks = 1:9,
+  #labels = 1:9
+  #) +
+  #scale_color_viridis_c(
+   # breaks = 1:3,
+    #labels = 1:3,
+    #option="magma",
+   # name="zone"
+  #) +
+  scale_color_viridis_c(
+  option = "magma",
+  limits = c(1, 9),
+  breaks = 1:9,
+  labels = 1:9,
+  name = "Zone"
+  )+
+  labs(
+    title = "Zones (CV=9 → PV=1)",
+    color = "Zone"
+  ) +
+  theme(plot.title = element_text(hjust = 0.8,face="bold"))
+###ggsave("spatialPlot_4815_revised_correctR.svg", width = 10, height = 8, dpi =600)
+#ggsave("spatialPlot_4826_revised_correctR.svg", width = 10, height = 8, dpi =600)
+
+```
+
+```{r}
+##Working on 07/17/2016 correct and very good##
+seurat_obj$zonation <- max(seurat_obj$zonation_pt, na.rm=TRUE) - seurat_obj$zonation_pt
+seurat_obj$zone3 <- cut(
+  seurat_obj$zonation,
+  breaks = quantile(seurat_obj$zonation, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  include.lowest = TRUE,
+  labels = c("CV", "MZ", "PV")
+)
+
+library(dplyr)
+library(ggplot2)
+
+df3 <- seurat_obj@meta.data %>%
+  dplyr::select(x, y, zone3) %>%
+  dplyr::filter(is.finite(x), is.finite(y), !is.na(zone3))
+
+df3$zone3 <- factor(df3$zone3, levels = c("CV", "MZ", "PV"))
+
+p3 <- ggplot(df3, aes(x, y, color = zone3)) +
+  geom_point(size = 1.5) +
+  coord_fixed() +
+  scale_color_manual(values = c(
+    "CV" = "#E41A1C",   # red
+    "MZ" = "#377EB8",   # blue
+    "PV" = "#4DAF4A"    # green
+  )) +
+  labs(
+    title = "Zonation (3 zones): CV / MZ / PV",
+    x = "x",
+    y = "y",
+    color = "Zone"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 16, face = "bold"),
+    axis.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 18, face = "bold"),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+p3
+```
+
+```{r}
+df <- seurat_obj@meta.data
+ggplot(df3, aes(x = x, y = y, color = zone3)) +
+  geom_point(size = 1.4) +
+  coord_fixed() +
+  theme_void() +
+  labs(title = "Spatial Plot of zonation_4815")
+
+ggtitle("zonation_stereo-seq_4815")
+##magma 3 main colors:
+p3 <- ggplot(df3, aes(x, y, color = zone3)) +
+  geom_point(size = 1.5) +
+  coord_fixed() +
+  scale_color_manual(values = c(
+    "CV" = "#FEC66D",   # red
+    "MZ" = "#B73779",   # blue
+    "PV" = "#3B0F70"    # green
+  )) +
+  labs(
+    title = "Zonation (3 zones): CV / MZ / PV",
+    x = "x",
+    y = "y",
+    color = "Zone"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(),
+    axis.title = element_text(),
+    axis.text = element_text(),
+    legend.title = element_text(),
+    legend.text = element_text()
+  )
+p3
+## redo with magma color
+```
+```{r}
+## redo with magma color
+
+library(ggplot2)
+#
+
+##LoessPLOt_linePlot (Zonation gnes) Figure4a
+
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+DefaultAssay(seurat_obj) <- "RNA"
+mat <- GetAssayData(seurat_obj, slot = "data")
+
+markers <- c("GLUL", "CYP1A2", "CYP2E1",   # CV markers
+             "PCK1", "ASS1", "CPS1", "HAL") # PV markers
+
+markers <- intersect(markers, rownames(seurat_obj))
+
+df <- lapply(markers, function(g) {
+  data.frame(
+    gene = g,
+    zonation_pt = seurat_obj$zonation_pt,
+    expr = as.numeric(mat[g, colnames(seurat_obj)])
+  )
+}) |> bind_rows()
+df
+ggplot(df, aes(x = zonation_pt, y = expr, color = gene)) +
+  geom_smooth(se = FALSE, method = "loess", linewidth = 1.2) +
+  theme_classic(base_size = 14) +
+      labs(
+        title = "Zonation genes",
+        x = "Zonation point(PV \u2192 CV)",
+        y = "Expression"
+      )
+
+
+##Save the data
+```
+##celltype visualization annotated from singleR
+```{r}
+my_colors <- c(
+  "B cells" = "#205444", "T cells" = "#ff7f0e", "NK cells" = "#2ca02c", "NK T cells" = "#c2a515",
+  "Dendritic cells" ="#e0d643" , "Myofibroblasts" = "#bf454f",
+  "Kupffer cells" = "#661f45","Cholangiocytes" = "#7d12c9","Plasma cells"="#cc72c8",
+  "Hepatocytes" ="#79b7c7","Unknown cells" = "#b6e043",
+  "Blood vascular endothelial cells"= "#70580d", "Liver sinusoidal endothelial cells"="#a38577","Neutrophils"="#3043bf","Proliferative dendritic cells"= "#e0ba7b"
+  # Add al cell types here with distinct colors
+)
+plot_spatial_celltype <- function(seurat_obj, x="x", y="y", group="cell_type", pt_size=1.2) {
+  df <- seurat_obj@meta.data %>% select(all_of(c(x,y,group)))
+  colnames(df) <- c("x","y","celltype")
+  
+  ggplot(df, aes(x = x, y = y, color =celltype)) +
+    geom_point(size = pt_size) +
+    coord_fixed() +
+    scale_color_manual(values = my_colors)+
+    scale_y_reverse()+
+    theme_void() +
+    labs(title = "Cell types") 
+ 
+  
+}
+coord_x <- "x"
+coord_y <- "y"
+#seurat_obj@meta.data$cell_type
+pCT <- plot_spatial_celltype(seurat_obj, x=coord_x, y=coord_y, group="cell_type")
+pCT
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyr)
+#library(ggplot2)
+library(patchwork)
+library(tibble)
+
+DefaultAssay(seurat_obj) <- "RNA"
+hep <- subset(seurat_obj, subset = cell_type == "Hepatocytes")
+DefaultAssay(hep) <- "RNA"
+
+############################################################
+# 1. CREATE CV -> PV BINS
+############################################################
+
+# Your data:
+# high zonation_pt = CV
+# low zonation_pt  = PV
+
+# Flip axis so:
+# low = CV
+# high = PV
+#table(zonation)
+seurat_obj$zonation_cv2pv <-
+  max(seurat_obj$zonation_pt, na.rm = TRUE) -
+  seurat_obj$zonation_pt
+
+n_bins <- 9
+
+seurat_obj$zbin9 <- cut(
+  seurat_obj$zonation_cv2pv,
+  breaks = seq(
+    min(seurat_obj$zonation_cv2pv, na.rm = TRUE),
+    max(seurat_obj$zonation_cv2pv, na.rm = TRUE),
+    length.out = n_bins + 1
+  ),
+  include.lowest = TRUE,
+  labels = as.character(1:n_bins)
+)
+############################################################
+# 2. GET TF EXPRESSION MATRIX
+############################################################
+
+mat <- GetAssayData(seurat_obj, slot = "data")
+
+# TF list already defined:
+# tfs <- c(...)
+tfs <- c("TCF7","AHR","FOXA2","NR1I3","PPARA","PPARD","PPARG","MLXIPL",
+         "DBP","HLF","HNF4A","TEAD1","KLF15","ESRRA","PGC1A","BHLHE40",
+         "NR1H3","SREBF1","NFIL3","TB1XR1","ATF2","CEBPA")
+##If your regulon columns are named like AHR directly, use those.
+#If named with suffix, set regulon_cols:
+
+
+tfs_present <- intersect(tfs, rownames(mat))
+
+tfs_present 
+df_tf <- data.frame(
+  bin = seurat_obj$zbin9,
+  t(as.matrix(
+    mat[tfs_present, colnames(seurat_obj), drop = FALSE]
+  ))
+)
+
+df_tf$bin <- as.character(df_tf$bin)
+
+############################################################
+# 3. MEAN EXPRESSION PER BIN
+############################################################
+
+bin_means <- df_tf %>%
+  filter(!is.na(bin)) %>%
+  group_by(bin) %>%
+  summarise(
+    across(all_of(tfs_present), mean),
+    .groups = "drop"
+  ) %>%
+  arrange(as.integer(bin))
+
+############################################################
+# 4. MATRIX FOR HEATMAP
+############################################################
+
+mat_bin <- t(as.matrix(bin_means[, -1]))
+
+# IMPORTANT:
+# use only numeric labels 1..9
+colnames(mat_bin) <- as.character(1:9)
+
+############################################################
+# 5. ROW-WISE MIN-MAX SCALING
+############################################################
+
+mat_mm <- t(
+  apply(mat_bin, 1, function(v) {
+    (v - min(v, na.rm = TRUE)) /
+      (max(v, na.rm = TRUE) - min(v, na.rm = TRUE) + 1e-9)
+  })
+)
+
+############################################################
+# 6. LONG FORMAT FOR GGPLOT
+############################################################
+
+hm <- as.data.frame(mat_mm) %>%
+  rownames_to_column("TF") %>%
+  pivot_longer(
+    -TF,
+    names_to = "Bin",
+    values_to = "Score"
+  )
+
+############################################################
+# 7. ORDERING
+############################################################
+
+hm$TF <- factor(
+  hm$TF,
+  levels = rev(rownames(mat_mm))
+)
+
+hm$Bin <- factor(
+  hm$Bin,
+  levels = as.character(1:9)
+)
+
+############################################################
+# 8. HEATMAP
+############################################################
+#ggplot(hm, aes(Bin, TF, fill=Score)) +
+ # +   geom_tile() +
+p_heat <- ggplot(
+  hm,
+  aes(x = Bin, y = TF, fill = Score)
+) +
+  
+  geom_tile() +
+  
+  scale_fill_gradient2(
+    low = "#2166AC",
+    mid = "white",
+    high = "#B2182B",
+    midpoint = 0.5,
+    name = "Score\nMin  Max"
+  ) +
+  
+  scale_x_discrete(
+    labels = 1:9
+  ) +
+  
+  theme_minimal(base_size = 12) +
+  
+  theme(
+    
+    panel.grid = element_blank(),
+    
+    axis.title = element_blank(),
+    
+    axis.text.x = element_text(),
+    
+    axis.text.y = element_text(),
+    plot.title = element_text(),
+    
+    legend.title = element_text(),
+      
+    legend.text = element_text(),
+    
+    legend.position = "right",
+    
+    plot.margin = margin(5, 5, 20, 5)
+  ) +
+  
+  labs(
+    title = "Homeostatic regulons"
+  ) +
+  
+  # CV under bin 1
+  annotate(
+    "text",
+    x = 1,
+    y = -Inf,
+    label = "CV",
+    vjust = -0.8,
+    size = 6,
+    fontface = "bold",
+    inherit.aes = FALSE
+  ) +
+  
+  # PV under bin 9
+  annotate(
+    "text",
+    x = 9,
+    y = -Inf,
+    label = "PV",
+   vjust = -0.8,
+    size =6,
+    fontface = "bold",
+    inherit.aes = FALSE
+  )
+
+############################################################
+# 9. TARGET GENES PANEL
+############################################################
+
+targets <- list(
+  TCF7 = "GLUL, LECT2, CYP2E1",
+  AHR = "PSMD5, TBX3, PRDX1",
+  FOXA2 = "CYP2C55, PEX2, CYP2C70",
+  NR1I3 = "CYP2C37, CYP2C29, CYP2C50",
+  PPARA = "GHR, GCK, MLXIPL",
+  PPARD = "ABCD3, CYP2C67, CYP2D9",
+  PPARG = "FABP1, CYP2A5, CYP4A14",
+  MLXIPL = "ACSL1, IRS1, ALDH4A1",
+  DBP = "NR1D2, CYP2E1, CAR3",
+  HLF = "CYP2E1, USP2, SLCO1B2",
+  HNF4A = "CYP2F2, ARG1, APOC3",
+  TEAD1 = "FGA, HP, MAT1A",
+  KLF15 = "ASS1, ACLY, GLS2",
+  ESRRA = "ATP5K, ATP5E, ATP5G3",
+  BHLHE40 = "ELOVL5, ACACA, LPIN1",
+  NR1H3 = "ACLY, ADIPOR2, SDHD",
+  SREBF1 = "UQCRH, ACLY, IDH3B",
+  NFIL3 = "PCK1, INSIG2, ARG1",
+  ATF2 = "THRB, TTR, APOA1",
+  CEBPA = "SCD1, CES1F, SLC38A4"
+)
+
+target_df <- tibble(
+  TF = names(targets),
+  Targets = unlist(targets)
+)
+
+target_df$TF <- factor(
+  target_df$TF,
+  levels = rev(rownames(mat_mm))
+)
+
+p_txt <- ggplot(
+  target_df,
+  aes(x = 0, y = TF, label = Targets)
+) +
+  
+  geom_text(
+    hjust = 0,
+    size = 2.0,
+    color = "black",
+  ) +
+  
+  theme_void() +
+  
+  xlim(0, 2) +
+  
+  labs(title = "Target genes") +
+  
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      color = "black"
+    ),
+    
+    plot.margin = margin(5, 5, 20, -20)
+  )
+
+############################################################
+# 10. COMBINE
+############################################################
+
+final_plot <-
+  (p_heat + p_txt) +
+  plot_layout(
+    widths = c(1.15, 1),
+    guides = "collect"
+  )
+
+final_plot
+```
+
+```{r}
+##Save the data
+#
+### based on mouse paper hepatocytes zonated genes
+genes_use <- c(
+  "CYP1A2","GLUL","SLC10A1","CYP2E1","AXIN2","CPS1",
+  "ATG7","ATG5","LAMP2",
+  "FGL1","HAMP","THRB","SC5D","SCD1",
+  "GLS2","CTNNBIP1","CYP2F2","XBP1","PCK1","ASS1"
+)
+genes_use
+##PV=lapply(PV,toupper)
+genes_use <- intersect(genes_use, rownames(seurat_obj))
+genes_use
+
+##2) Build the heatmap matrix (genes × zonation bins)
+#Function that returns a scaled matrix ready for plotting
+library(Seurat)
+library(dplyr)
+library(Matrix)
+#make_zonation_heatmap_matrix <- function(seu,
+#celltype = "Cholangiocytes",
+#genes,
+# n_bins = 9,
+#n_bins = 3,
+#assay = "RNA",
+#slot = "data",
+#direction = c("CV_to_PV","PV_to_CV")) {
+genes_use <- c(
+  "KRT19","KRT7","EPCAM","SOX9","MSLN","CFTR"##cholangiocytes
+)
+genes_use<-genes_use <- c(
+  "C1QC","MARCO","LST1","TYROBP","FCER1G","APOE")##kupffer cells
+
+#genes_use<-genes_use <- c(
+  ##"WNT2","DLL4","TEK","PLPP1","ACKR4","ACKR2","GATA4","HES1","EFNB1", "CXCL16")
+
+genes_use<-genes_use <- c(
+  "C1QC","MARCO","LST1","TYROBP","FCER1G","APOE")
+
+##genes_use <- intersect(genes_use, rownames(seurat_obj))
+genes_use
+
+make_zonation_heatmap_matrix <- function(seu,
+                                         celltype = "Hepatocytes",
+                                         #celltype = "Cholangiocytes",
+                                         #celltype = "HSC",
+                                         #celltype = "HSC",
+                                         #celltype = "Kupffer cells",
+                                         genes,
+                                         n_bins = 9,
+                                         #n_bins = 3,
+                                         assay = "RNA",
+                                         slot = "data",
+                                         direction = c("CV_to_PV","PV_to_CV")) {
+  
+  direction <- match.arg(direction)
+  
+  DefaultAssay(seu) <- assay
+  mat <- GetAssayData(seu, slot = slot)  # genes x cells
+  
+  genes <- intersect(genes, rownames(seu))
+  if (length(genes) < 2) stop("Too few genes found in object.")
+  meta <- seu@meta.data %>%
+    dplyr::filter(cell_type == celltype) %>%
+    dplyr::select(zonation_pt)##cell_type == celltype
+  
+  
+  cells <- rownames(meta)
+  #if (length(cells) < 5) warning("Very few LSEC: ", length(cells))
+  
+  # make bins
+  meta$bin <- cut(meta$zonation_pt,
+                  breaks = seq(0, 1, length.out = n_bins + 1),
+                  include.lowest = TRUE,
+                  labels = FALSE)
+  
+  # mean expression per bin
+  out <- sapply(1:n_bins, function(b){
+    bcells <- cells[meta$bin == b]
+    if (length(bcells) == 0) return(rep(NA_real_, length(genes)))
+    Matrix::rowMeans(mat[genes, bcells, drop = FALSE])
+  })
+  
+  rownames(out) <- genes
+  colnames(out) <- as.character(1:n_bins)
+  
+  # row-wise z-score (like "Min/Max" scale in figure)
+  z <- t(scale(t(out)))
+  z[is.na(z)] <- 0
+  
+  # set direction
+  if (direction == "CV_to_PV") {
+    # if your zonation_pt is PV(0)->CV(1), then CV_to_PV means reverse columns
+    z <- z[, n_bins:1, drop = FALSE]
+    colnames(z) <- as.character(n_bins:1)
+  }
+  
+  return(z)
+ 
+}
+# install.packages("pheatmap") if needed
+library(pheatmap)
+
+zmat <- make_zonation_heatmap_matrix(
+  seurat_obj,
+  celltype = "Hepatocytes",
+  genes = genes_use,
+  #n_bins = 3,
+  n_bins = 9,
+  direction = "CV_to_PV"   # matches example figure
+)
+zmat <- zmat[, as.character(1:9)]
+
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+col_fun <- colorRamp2(
+  c(-2, 0, 2),
+  c("#2166AC", "white", "#D73027")
+)
+#col_fun <- colorRamp2(
+ # c(-2, 0, 2),
+ # c("#2a5e20", "#2166AC", "#D73027")
+#)
+
+##-plot heatmap
+ht <- Heatmap(
+  zmat,
+  
+  name = "Exp",
+  
+  col = col_fun,
+  
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  
+  row_names_side = "right",
+  
+  row_names_gp = gpar(
+    fontsize = 10
+    ),
+  
+  column_names_gp = gpar(
+    fontsize = 10,
+    ),
+  
+  column_title = "Hep zonated genes (CV \u2192 PV)",
+  
+  column_title_gp = gpar(
+    fontsize = 18,
+    ),
+  
+  heatmap_legend_param = list(
+    title = "Exp",
+    title_gp = gpar(fontsize = 10 ),
+    labels_gp = gpar(fontsize = 10)
+  )
+)
+print(ht)
+#@@save the data
+
+
+```
+
+
+```{r}
+ 
+p3
+##Figure4 ## spatial plot +line graph for hepatocyte zonated genes and verified omn July17-28 2026
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(akima)
+library(scales)
+
+n_bins <- 9
+seurat_obj$zbin9 <- cut(
+  seurat_obj$zonation_pt,
+  breaks = seq(min(seurat_obj$zonation_pt, na.rm=TRUE),
+               max(seurat_obj$zonation_pt, na.rm=TRUE),
+               length.out = n_bins + 1),
+  include.lowest = TRUE,
+  labels = as.character(1:n_bins)
+)
+
+
+#Helper: CV→PV bin profile line plot (bottom plot)
+plot_gene_zonation_profile <- function(seu, gene,
+                                       bin_col="zbin9",
+                                       assay="RNA", slot="data",
+                                       title=NULL) {
+  
+  DefaultAssay(seu) <- assay
+  mat <- GetAssayData(seu, slot=slot)
+  if (!gene %in% rownames(mat)) stop(paste("Gene not found:", gene))
+  
+  df <- data.frame(
+    bin = seu@meta.data[[bin_col]],
+    expr = as.numeric(mat[gene, rownames(seu@meta.data)])
+  ) %>%
+    filter(!is.na(bin), is.finite(expr)) %>%
+    group_by(bin) %>%
+    summarise(mean_expr = mean(expr), .groups="drop") %>%
+    mutate(bin_num = as.integer(as.character(bin))) %>%
+    arrange(bin_num)
+  ggplot(df, aes(x = bin_num, y = mean_expr)) +
+    
+    geom_line(color = "firebrick", linewidth = 1.5) +
+    geom_point(color = "firebrick", size = 2) +
+    scale_y_continuous(
+      labels = function(x) sprintf("%.2f", x)
+    )+
+    theme_classic(base_size = 12) +
+    
+    labs(
+      x = "PV → CV",
+      y = "Expression",
+      title = title
+    ) +
+    
+    scale_x_continuous(
+      breaks = 1:9,
+      labels = 1:9,
+      expand = expansion(mult = c(0.02, 0.02))
+    ) +
+      theme(
+      plot.title = element_text(
+              ),
+      
+      axis.title.x = element_text(
+        
+      ),
+      
+      axis.title.y = element_text(
+        
+      ),
+      
+      axis.text.x = element_text(
+        
+      ),
+      
+      axis.text.y = element_text(
+        
+      ),
+      
+      axis.line = element_line(
+        linewidth = 0.8
+      )
+    )
+}  
+library(imager)
+## newfor spatial map contourupdated-05/14/2026
+  plot_gene_spatial_contour <- function(
+    seu,
+    gene,
+    x = "x",
+    y = "y",
+    assay = "RNA",
+    slot = "data",
+    grid_n = 400,          # MUCH higher resolution
+    contour_quantile = 0.92,
+    smooth_sigma = 2,
+    title = NULL
+  ){
+    
+    library(akima)
+    library(ggplot2)
+    library(scales)
+    library(imager)
+    
+    DefaultAssay(seu) <- assay
+    mat <- GetAssayData(seu, slot = slot)
+    
+    if (!gene %in% rownames(mat))
+      stop(paste("Gene not found:", gene))
+    
+    df <- seu@meta.data %>%
+      dplyr::select(all_of(c(x, y))) %>%
+      mutate(expr = as.numeric(mat[gene, rownames(seu@meta.data)])) %>%
+      filter(is.finite(.data[[x]]),
+             is.finite(.data[[y]]),
+             is.finite(expr)) %>%
+      rename(X = all_of(x),
+             Y = all_of(y))
+    
+    # OPTIONAL: remove ultra-low noise
+    thresh <- quantile(df$expr[df$expr > 0], 0.15, na.rm = TRUE)
+    df$expr[df$expr < thresh] <- 0
+    
+    # Interpolation
+    interp <- akima::interp(
+      x = df$X,
+      y = df$Y,
+      z = df$expr,
+      nx = grid_n,
+      ny = grid_n,
+      duplicate = "mean"
+    )
+    
+    grid <- expand.grid(
+      X = interp$x,
+      Y = interp$y
+    )
+    
+    grid$expr <- as.vector(interp$z)
+    
+    # Replace NAs
+    grid$expr[is.na(grid$expr)] <- 0
+    
+    # ---- Gaussian smoothing ----
+    mat_img <- matrix(grid$expr, nrow = grid_n, ncol = grid_n)
+    
+    img <- as.cimg(mat_img)
+    
+    img_s <- isoblur(img, sigma = smooth_sigma)
+    
+    smooth_vals <- as.vector(img_s)
+    
+    grid$expr_s <- rescale(
+      smooth_vals,
+      to = c(0,1),
+      from = range(smooth_vals, na.rm = TRUE)
+    )
+    
+    # Contour threshold
+    thr <- quantile(grid$expr_s, contour_quantile, na.rm = TRUE)
+    p <- ggplot(grid, aes(X, Y)) +
+      
+      geom_raster(
+        aes(fill = expr_s),
+        interpolate = TRUE
+      ) +
+      
+      geom_contour(
+        aes(z = expr_s),
+        breaks = c(thr),
+        color = "white",
+        linewidth = 0.7
+      ) +
+      
+      coord_fixed(clip = "off") +
+      
+      scale_fill_gradient(
+        low = "#2C105C",
+        high = "#FDE725",
+        name = "Exp\nMax\nMin"
+      ) +
+      
+      theme_void(base_size = 11) +
+      
+      theme(
+        plot.title = element_text(
+          hjust = 0.5,
+          size = 12
+        ),
+        
+        legend.position = "right",
+        
+        legend.title = element_text(
+          ),
+        
+        legend.text = element_text(
+          size = 10,
+          ),
+        plot.margin = margin(10, 30, 40, 10)
+      ) +
+      
+      labs(
+        title = ifelse(is.null(title), gene, title)
+      )
+  }
+## Build one gene “E/F style” block (map + profile) slide25-27
+panel_gene_map_profile <- function(seu, gene){
+  p_map <- plot_gene_spatial_contour(seu, gene, contour_quantile=0.85)
+  p_line <- plot_gene_zonation_profile(seu, gene)
+  p_map / p_line + plot_layout(heights = c(2.2, 1))
+}
+# genes for E and F (edit names to match your object; case sensitive)
+genes_E <- c("CYP1A2","SLC10A1","GLUL")
+genes_F <- c("HAMP","CPS1","PCK1")
+genes_g <- c("CYP2E1","LAMP2","XBP1")
+genes_H <- c("ASS1","GLS2","XBP1")
+genes_j <- "CTNNBIP1"
+# Make each gene block (map+line)
+E_blocks <- lapply(genes_E, function(g) panel_gene_map_profile(seurat_obj, g))
+##create same blocks mapping for each group
+# Combine into 3 columns (like your figure)
+figE <- E_blocks[[1]] | E_blocks[[2]] | E_blocks[[3]]
+
+##generate plot combing three plots for all genes in each group:CV and PV)
+
+figE
+
+p1 <- plot_gene_spatial_contour(seurat_obj, "CYP1A2")
+## create the plot for each gene for cv and pv zones
+p1
+## print al l gnesat a time for cv and PV zones
+#Save the data
+##ggsave("Figure2_zonated_genes_CV_cont_4815.svg", figE, width=9.5, height=4.2, dpi=600)
+
+```
+
+
+```{r}
+
+seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4815_all.rds")
+# nonparenchymal cell type (cholangiocytes & Kupffer cells)
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Matrix)
+
+make_zonation_heatmap <- function(seu, celltype, genes,
+                                  bin_width = 0.07,
+                                  assay = "RNA",
+                                  slot = "data",
+                                  scale_by_gene = TRUE) {
+  
+  DefaultAssay(seu) <- assay
+  mat <- GetAssayData(seu, slot = slot)  # genes x cells
+  
+  # keep genes that exist
+  genes <- intersect(genes, rownames(seu))
+  if (length(genes) < 2) stop("Too few genes found in the object for: ", celltype)
+  
+  # subset cells
+  meta <- seu@meta.data %>%
+    dplyr::filter(cell_type == celltype) %>%
+    dplyr::select(zonation_pt)
+  
+  cells <- rownames(meta)
+  if (length(cells) < 10) warning("Very few cells for ", celltype, ": ", length(cells))
+  
+  # make zonation bins
+  breaks <- seq(0, 1, by = bin_width)
+  meta$z_bin <- cut(meta$zonation_pt, breaks = breaks, include.lowest = TRUE)
+  
+  # expression for selected cells/genes
+  expr <- t(as.matrix(mat[genes, cells, drop = FALSE]))  # cells x genes
+  df <- cbind(meta, expr) %>% as.data.frame()
+  
+  # long format
+  df_long <- df %>%
+    tidyr::pivot_longer(cols = all_of(genes), names_to = "gene", values_to = "expr")
+  
+  # average expression per bin per gene
+  hm <- df_long %>%
+    group_by(gene, z_bin) %>%
+    summarise(mean_expr = mean(expr, na.rm = TRUE), .groups = "drop")
+  
+  # optional: z-score per gene (recommended for heatmap look)
+  if (scale_by_gene) {
+    hm <- hm %>%
+      group_by(gene) %>%
+      mutate(value = as.numeric(scale(mean_expr))) %>%
+      ungroup()
+    fill_lab <- "Z-score"
+  } else {
+    hm$value <- hm$mean_expr
+    fill_lab <- "Mean expr"
+  }
+  
+  # ensure PV->CV order on x-axis
+  hm$z_bin <- factor(hm$z_bin, levels = levels(meta$z_bin))
+  
+  p <- ggplot(hm, aes(x = z_bin, y = gene, fill = value)) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "magma", name = fill_lab) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.text.y = element_text()
+    ) +
+    
+    labs(
+      title = paste0(celltype, ": marker genes along PV \u2192 CV"),
+      x = "Portal \u2192 Pericentral",
+      y = NULL
+    )
+  
+  return(p)
+}
+
+
+#
+chol_genes <- c("KRT19","KRT7","EPCAM","SOX9","MSLN","CFTR")
+
+p_chol_z <- make_zonation_heatmap(
+  seurat_obj,
+  celltype = "Cholangiocytes",
+  genes = chol_genes,
+  bin_width = 0.05,
+  scale_by_gene = TRUE
+)
+
+print(p_chol_z)
+
+kup_genes <- c("C1QC","MARCO","LST1","TYROBP","FCER1G","APOE")
+
+p_kup_z <- make_zonation_heatmap(
+  seurat_obj,
+  celltype = "Kupffer cells",
+  genes = kup_genes,
+  bin_width = 0.07,
+  scale_by_gene = TRUE
+)+
+  theme(axis.text.y = element_text())
+
+print(p_kup_z)
+library(patchwork)
+#ggsave("Zonation_heatmaps_Kupffer_markers_4826.svg")
+#ggsave("Zonation_heatmaps_cholangiocytes_markers_4826.svg")
+ggsave("Zonation_heatmaps_Kupffer_Cholangiocytes_markers_4826.svg",
+       (p_kup_z / p_chol_z),
+       width = 12, height = 7, dpi = 600)
+ggsave("Zonation_heatmaps_Kupffer_markers_4815.svg")
+(p_kup_z / p_chol_z) + plot_layout(heights = c(1, 1))
+ggsave("Zonation_heatmaps_Kupffer_Cholangiocytes_markers_4815.svg",
+       (p_kup_z / p_chol_z),
+       width = 12, height = 7, dpi = 600)
+
+```
+
+
+```{r}
+
+hep <- subset(seurat_obj, subset = cell_type=="Hepatocytes")
+hep@meta.data$zonation_pt
+#hep$zonation_pt<-hep@meta.data$zonation_pt
+  # split by zonation pseudotime quantiles
+q1 <- quantile(hep$zonation_pt, 0.2, na.rm=TRUE)
+q2 <- quantile(hep$zonation_pt, 0.8, na.rm=TRUE)
+
+hep$zone_group <- ifelse(hep$zonation_pt <= q1, "PV", ifelse(hep$zonation_pt >= q2, "CV", "Mid"))
+hep_sub <- subset(hep, subset = zone_group %in% c("PV","CV"))
+
+Idents(hep_sub) <- hep_sub$zone_group
+deg <- FindMarkers(hep_sub, ident.1="CV", ident.2="PV", logfc.threshold=0.25)
+deg
+# Add gene names as a column
+deg$gene <- rownames(deg)
+
+# Reorder columns so gene is first
+deg <- deg[, c("gene", setdiff(colnames(deg), "gene"))]
+
+# Save as CSV
+#write.csv(
+  #deg,
+  #file = "CV_vs_PV_DEG_hepatocytes_4826.csv",
+ # row.names = FALSE
+#)
+```
+
+```{r}
+
+##density plot for supplimental ##cholangiocytes and kupffer cells
+kup_meta <- seurat_obj@meta.data %>%
+  dplyr::filter(cell_type == "Kupffer cells") %>%
+  dplyr::select(zonation_pt)
+chol_meta <- seurat_obj@meta.data %>%
+  dplyr::filter(cell_type == "Cholangiocytes") %>%
+  dplyr::select(zonation_pt)
+all_meta <- seurat_obj@meta.data %>%
+  dplyr::select(zonation_pt)
+library(ggplot2)
+
+ggplot() +
+  geom_density(data = all_meta, aes(x = zonation_pt), color="grey60", linewidth=1.0) +
+  geom_density(data = kup_meta, aes(x = zonation_pt), color="red", linewidth=1.0) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(
+    
+    ),
+    axis.text.y = element_text(size = 11, face = "bold",color = "black")
+    ,
+    plot.title = element_text(
+      size = 11,
+     hjust = 0.5
+    ),
+    
+    legend.title = element_text(
+      size = 11,
+      ),
+    
+    legend.text = element_text(
+      size = 12,
+      face = "bold"
+    ),
+    axis.title = element_text(
+          ),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Kupffer Cells_distribution (PV-CV)",
+    x = "Portal → Pericentral",
+    y = "Density"
+  ) +
+  scale_x_continuous(limits = c(0,1))
+
+#ggsave("Zonation_KUpffer Cellsdistribution_4826.svg")
+#ggsave("Zonation_KUpffer Cellsdistribution_4815.svg")
+
+```
+
+```{r}
+plot_gene <- function(obj, gene){
+  df <- FetchData(obj, vars=c("x","y",gene))
+  colnames(df) <- c("x","y","expr")
+  
+  ggplot(df, aes(x,y,color=expr)) +
+    geom_point(size=0.8) +
+    coord_fixed() +
+    scale_color_viridis_c() +
+    theme_void() +
+    ggtitle(gene)+
+    theme(
+      plot.title = element_text(
+        size = 10,
+        hjust = 0.5
+      ),
+      legend.title = element_text(
+        size = 10,
+       ),
+      
+      legend.text = element_text(
+        size = 12,
+        )
+      
+)
+}
+pD1 <- plot_gene(seurat_obj, "KDR")
+pD2 <- plot_gene(seurat_obj, "C1QC")
+pD3 <- plot_gene(seurat_obj, "ACTA2")
+pD4 <- plot_gene(seurat_obj, "KRT19")
+library(patchwork)
+pD <- (pD1 + pD2) / (pD3 + pD4)
+pD
+
+#ggsave("NPCs_markergenes_distribution_4826.svg",pD, width=14, height=10, dpi=600)
+#ggsave("NPCs_markergenes_distribution_4815.svg",pD, width=14, height=10, dpi=600)
+#ggsave("NPCs_markergenes_distribution_4815.svg",pD, width=14, height=10, dpi=300)
+
+plot_spatial_continuous <- function(obj, feature, title=NULL, x="x", y="y", pt_size=1.0) {
+  stopifnot(feature %in% colnames(obj@meta.data))
+  stopifnot(x %in% colnames(obj@meta.data))
+  stopifnot(y %in% colnames(obj@meta.data))
+  
+  df <- obj@meta.data[, c(x, y, feature)]
+  colnames(df) <- c("x","y","val")
+  
+  ggplot(df, aes(x=x, y=y, color=val)) +
+    geom_point(size=pt_size) +
+    coord_fixed() +
+    scale_color_viridis_c() +
+    theme_void() +
+    labs(title=title, color=feature) +
+    theme(plot.title = element_text(hjust=0.5))
+}
+kupffer <- subset(seurat_obj, subset = cell_type == "Kupffer cells")
+cholango<-subset(seurat_obj, subset = cell_type == "Cholangiocytes")
+pA <- plot_spatial_continuous(cholango, "zonation_pt", "Cholangiocytes")
+pA
+
+pB <- plot_spatial_continuous(kupffer, "zonation_pt", "Kupffer cells")
+pB
+
+##overlay
+p_cholango_pub <- ggplot(cholango@meta.data, aes(x = x, y = y)) +
+  stat_density_2d(
+    aes(fill = after_stat(density)),
+    geom = "raster",
+    contour = FALSE
+  ) +
+  scale_fill_viridis_c(option = "viridis", name = "Density") +
+  coord_fixed() +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(
+      ),
+    
+    legend.text = element_text(
+      ),
+    
+    plot.title = element_text(hjust = 0.6, size = 18,face="bold")
+  ) +
+  ggtitle("Cholangocytes spatial niches")
+p_cholango_pub
+
+p_kupffer_pub <- ggplot(kupffer@meta.data, aes(x = x, y = y)) +
+  stat_density_2d(
+    aes(fill = after_stat(density)),
+    geom = "raster",
+    contour = FALSE
+  ) +
+  scale_fill_viridis_c(option = "viridis", name = "Density") +
+  coord_fixed() +
+  theme_void() +
+      theme(
+      legend.position = "right",
+      legend.title = element_text(
+        ),
+      
+      legend.text = element_text(
+        ),
+      
+      plot.title = element_text(hjust = 0.6, size = 18,face="bold")
+    
+  ) +
+  ggtitle("kupffer cell spatial niches")
+
+print(p_kupffer_pub)
+
+
+##ggsave("SuPPFigure_Kupffer_niches_2_publication_4815.tiff", p_kupffer_pub,
+      # width = 6, height = 4, dpi = 300)
+
+##need to perform the analysis for both samples
+
+
+
+
+```
+```{r}
+##Panel E – GO + KEGG enrichment for each population
+library(clusterProfiler)
+library(org.Bt.eg.db)
+HEP_genes <- rownames(FindMarkers(seurat_obj, ident.1="Hepatocytes", group.by="cell_type"))
+#kup_genes <- rownames(FindMarkers(seurat_obj, ident.1="Kupffer cells", group.by="cell_type"))
+
+entrez <- bitr(HEP_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Bt.eg.db)
+#entrez <- bitr(kup_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Bt.eg.db)
+
+ego <- enrichGO(entrez$ENTREZID, OrgDb=org.Bt.eg.db, ont="BP")
+ekk <- enrichKEGG(entrez$ENTREZID, organism="bta")
+ego
+ekk
+pE1 <- dotplot(ego, showCategory = 15) +
+  ggtitle("GO term pathway") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(
+      ),
+    axis.text.y = element_text(
+      ),
+    plot.title = element_text(
+      size = 12,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      size = 10,
+      ),
+    legend.text = element_text(
+      size = 12,
+      ),
+    axis.title = element_text(
+      size = 12,
+      ),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    x = "GeneRatio"
+  )
+
+pE1
+#ggsave("Go-term_Hepatocytes_4815.svg",pE1, width=14, height=10, dpi=600)
+
+pE2 <- dotplot(ekk, showCategory=15) + 
+  ggtitle("keggpathway enrichment")+
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(
+      ),
+    axis.text.y = element_text(
+      ),
+    plot.title = element_text(
+      size = 12,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      size = 10,
+      ),
+    legend.text = element_text(
+      size = 14,
+      face = "bold"
+    ),
+    axis.title = element_text(
+      size = 12,
+      ),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    x = "GeneRatio"
+  )
+
+pE2
+#ggsave("keggpathway enrichment_Hepatocytes_4815.svg",pE2, width=14, height=10, dpi=600)
+
+pE1 <- dotplot(ego, showCategory=10) + ggtitle("Immune response")
+pE2 <- dotplot(ekk, showCategory=5) + ggtitle("Cytokine signaling")
+pE1
+pE2
+centroids <- seurat_obj@meta.data %>%
+  group_by(cell_type) %>%
+  summarise(x=mean(x), y=mean(y))
+library(igraph)
+
+
+edges <- expand.grid(from=centroids$cell_type, to=centroids$cell_type)
+
+g <- graph_from_data_frame(edges, directed=FALSE)
+
+pF <- ggraph(g, layout="circle") +
+  geom_edge_link(alpha=0.4) +
+  geom_node_point(size=12, aes(color=name)) +
+  geom_node_text(aes(label=name), repel=TRUE) +
+  theme_void()
+
+pF
+
+#final_fig <- (pA + pB + pC) / (pD + pE1 + pF)
+
+#ggsave("Figure3_spatial_nonparenchymal.png", final_fig, width=14, height=10, dpi=300)
+##
+```
+
+```{r}
+
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(Matrix)
+
+DefaultAssay(seurat_obj) <- "RNA"
+
+
+plot_spatial_gene <- function(seu, gene, pt_size=1.0, title=NULL){
+  df <- FetchData(seu, vars=c("x","y",gene))
+  colnames(df) <- c("x","y","expr")
+  ggplot(df, aes(x,y,color=expr)) +
+    geom_point(size=pt_size) +
+    coord_fixed() +
+    #scale_color_viridis_c(option="magma") +
+    scale_color_viridis_c(option="viridis") +
+    theme_void() +
+    ggtitle(ifelse(is.null(title), gene, title)) +
+    theme(
+        plot.title = element_text(
+         hjust = 0.5
+      ),
+  
+     legend.title = element_text(
+    ),
+  
+   legend.text = element_text(
+      )
+)
+}   
+plot_zonation_tile <- function(seu, gene, n_bins=40, title=NULL){
+  
+  df <- FetchData(seu, vars=c("zonation_pt", gene)) |>
+    dplyr::filter(is.finite(zonation_pt))
+  colnames(df) <- c("z","expr")
+  
+  breaks <- seq(0, 1, length.out = n_bins + 1)
+  df$zbin <- cut(df$z, breaks=breaks, include.lowest=TRUE)
+  
+  agg <- df |>
+    group_by(zbin) |>
+    summarise(val = mean(expr, na.rm=TRUE), .groups="drop")
+  
+  agg$x <- seq_len(nrow(agg))
+  agg$y <- 1
+  
+  # Axis ticks
+  x_breaks <- round(seq(1, nrow(agg), length.out=5))
+  x_labels <- round(seq(0, 1, length.out=5), 2)
+  
+  ggplot(agg, aes(x=x, y=y, fill=val)) +
+    geom_tile(height=0.9) +
+    scale_fill_viridis_c(option="magma", name="Expression") +
+    #scale_fill_viridis_c(option="viridis", name="Expression") +
+    scale_x_continuous(
+      breaks = x_breaks,
+      labels = x_labels
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(
+              ),
+      
+      legend.title = element_text(
+        ),
+      
+      legend.text = element_text(
+       
+      ),
+      axis.title = element_text(
+        ),
+      panel.grid = element_blank()
+    ) +
+    theme(
+      axis.text.y  = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.title = element_text(hjust=0.5)
+    ) +
+    labs(
+      x = "Portal→Pericentral",
+      title = ifelse(is.null(title), gene, title)
+    )
+}
+
+
+
+##Figure 4A – Spatial maps of propionate-metabolism genes (ACSS3, PCCA, MCEE)
+pA1 <- plot_spatial_gene(seurat_obj, "ACSS3")
+pA2 <- plot_spatial_gene(seurat_obj, "PCCA")
+pA3 <- plot_spatial_gene(seurat_obj, "MCEE")
+pA1
+pA2
+pA3
+pA4 <- plot_spatial_gene(seurat_obj, "CTNNBIP1")
+pA4 
+pA <- pA1 + pA2 + pA3 + plot_layout(ncol=3)
+pA
+##Figure 4B – Expanded periportal urea-cycle domain (ASS1, ARG1)
+##“PV→CV rectangle” style:
+pB1 <- plot_zonation_tile(seurat_obj, "ASS1", title="ASS1")
+pB2 <- plot_zonation_tile(seurat_obj, "ARG1", title="ARG1")
+pB <- pB1 + pB2 + plot_layout(ncol=2)
+pB
+pA1 <- plot_zonation_tile(seurat_obj, "GLUL", title="GLUL")
+pA2 <- plot_zonation_tile(seurat_obj, "SLC10A1", title="SLC10A1")
+pA <- pA1 + pA2 + plot_layout(ncol=2)
+pA
+p1 <- plot_zonation_tile(seurat_obj, "CTNNBIP1", title="CTNNBIP1")
+p1
+#pB2
+ggsave("periportal urea-cycle domain_4815.svg", pB,width = 6, height = 4, dpi = 600)
+ggsave("pericentral urea-cycle domain_4815.svg", pA,width = 6, height = 4, dpi = 600)
+ggsave("Figure4B_periportal urea-cycle domain_4826.png", pB,
+       width = 6, height = 4, dpi = 300)
+plot_spatial_gene(seurat_obj, "ASS1")
+plot_spatial_gene(seurat_obj, "ARG1")
+plot_spatial_gene(seurat_obj, "HMGCS2")
+plot_spatial_gene(seurat_obj, "BDH1")
+##Figure 4C – Ketogenesis pathway enrichment (HMGCS2, BDH1) ## important
+pC1 <- plot_zonation_tile(seurat_obj, "HMGCS2")
+pC2 <- plot_zonation_tile(seurat_obj, "BDH1")
+pC <- pC1 + pC2 + plot_layout(ncol=2)
+pC
+#ggsave("Ketogenesis pathway enrichment_4826.svg", pc,width = 6, height = 4, dpi = 600)
+##ggsave("Ketogenesis pathway enrichment_4815.svg", pc,width = 6, height = 4, dpi = 600)
+
+
+```
+```{r}
+
+## KEGG pathway enrichment
+
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(clusterProfiler)
+library(org.Bt.eg.db)
+
+# -----------------------------
+# 1. Subset hepatocytes
+# -----------------------------
+hep <- subset(seurat_obj, subset = cell_type == "Hepatocytes")
+DefaultAssay(hep) <- "RNA"
+
+# -----------------------------
+# 2. Create correct CV/MZ/PV zones
+# high zonation_pt = CV
+# low zonation_pt  = PV
+# -----------------------------
+hep$zonation_cv2pv <- max(hep$zonation_pt, na.rm = TRUE) - hep$zonation_pt ##
+#hep@
+hep$zone3 <- cut(
+  hep$zonation_cv2pv,
+  breaks = quantile(
+    hep$zonation_cv2pv,
+    probs = c(0, 1/3, 2/3, 1),
+    na.rm = TRUE
+  ),
+  include.lowest = TRUE,
+  labels = c("CV","MZ","PV")
+)
+
+hep$zone3 <- factor(hep$zone3, levels = c("CV","MZ","PV"))
+table(hep$zone3)
+table(hep$zone3)
+Idents(hep) <- "zone3"
+DefaultAssay(hep) <- "RNA"
+
+deg_CV <- FindMarkers(hep, ident.1="CV", ident.2=c("MZ","PV"), logfc.threshold=0.25)
+deg_MZ <- FindMarkers(hep, ident.1="MZ", ident.2=c("CV","PV"), logfc.threshold=0.25)
+deg_PV <- FindMarkers(hep, ident.1="PV", ident.2=c("CV","MZ"), logfc.threshold=0.25)
+deg_CV
+deg_PV
+deg_MZ
+get_sig_genes <- function(deg, padj=0.05, topN=1000){
+  deg <- deg[order(deg$p_val_adj, -abs(deg$avg_log2FC)), , drop=FALSE]
+  g <- rownames(deg)[which(deg$p_val_adj < padj)]
+  head(g, topN)
+}
+
+genes_CV <- get_sig_genes(deg_CV)
+genes_MZ <- get_sig_genes(deg_MZ)
+genes_PV <- get_sig_genes(deg_PV)
+genes_CV
+genes_PV
+genes_MZ
+##  KEGG enrichment per zone (Bos taurus)
+# BiocManager::install(c("clusterProfiler","org.Bt.eg.db"))
+##install.packages("ggplot2")
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("org.Bt.eg.db")
+#packageVersion("ggplot2")
+
+library(clusterProfiler)
+library(org.Bt.eg.db)
+##Map gene symbols → Entrez IDs
+to_entrez <- function(genes){
+  bitr(genes, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Bt.eg.db) %>%
+    distinct(SYMBOL, .keep_all=TRUE)
+}
+
+ent_CV <- to_entrez(genes_CV)
+ent_MZ <- to_entrez(genes_MZ)
+ent_PV <- to_entrez(genes_PV)
+ent_CV
+## Run enrichKEGG
+ekegg <- function(entrez_ids){
+  enrichKEGG(
+    gene = entrez_ids,
+    organism = "bta",
+    pAdjustMethod = "BH",
+    qvalueCutoff = 0.3
+  )
+}
+
+k_CV <- ekegg(ent_CV$ENTREZID)
+k_MZ <- ekegg(ent_MZ$ENTREZID)
+k_PV <- ekegg(ent_PV$ENTREZID)
+##Build the CV/MZ/PV heatmap of −log10(q)
+library(tidyr)
+library(ggplot2)
+kegg_df <- function(k, zone){
+  if (is.null(k) || nrow(as.data.frame(k))==0) return(data.frame())
+  as.data.frame(k) %>%
+    transmute(
+      Pathway = Description,
+      q = qvalue,
+      neglog10q = -log10(q),
+      zone = zone
+    )
+}
+
+df_all <- bind_rows(
+  kegg_df(k_CV, "CV"),
+  kegg_df(k_MZ, "MZ"),
+  kegg_df(k_PV, "PV")
+)
+
+# choose pathways to display (top across all zones)
+top_paths <- df_all %>%
+  group_by(Pathway) %>%
+  summarise(maxScore = max(neglog10q, na.rm=TRUE), .groups="drop") %>%
+  arrange(desc(maxScore)) %>%
+  slice_head(n = 25) %>%          # change 20 to what you want
+  pull(Pathway)
+#Explicitly call dplyr::select() and tidyr::pivot_wider():
+hm <- df_all %>%
+  dplyr::filter(Pathway %in% top_paths) %>%
+  dplyr::select(Pathway, zone, neglog10q) %>%
+  tidyr::pivot_wider(
+    names_from = zone,
+    values_from = neglog10q,
+    values_fill = 0
+  )
+hm_long <- hm %>%
+  tidyr::pivot_longer(
+    cols = c("CV","MZ","PV"),
+    names_to = "Zone",
+    values_to = "Score"
+  )
+
+
+#hm <- df_all %>%
+# filter(Pathway %in% top_paths) %>%
+# select(Pathway, zone, neglog10q) %>%
+#pivot_wider(names_from = zone, values_from = neglog10q, values_fill = 0)
+
+# long for ggplot
+##hm_long <- hm %>%
+##pivot_longer(cols = c("CV","MZ","PV"), names_to="Zone", values_to="Score") did not work
+
+# keep pathway order like the figure (top enriched at bottom or top as you prefer)
+hm_long$Pathway <- factor(hm_long$Pathway, levels = rev(top_paths))
+hm_long$Zone <- factor(hm_long$Zone, levels=c("CV","MZ","PV"))
+theme_set(
+  theme_minimal(base_size = 12) +
+    theme(
+      text = element_text(face = "bold")
+    )
+)
+p <- ggplot(hm_long, aes(x=Zone, y=Pathway, fill=Score)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high="firebrick",
+                      name=expression(-log[10](Q~value))) +
+  theme_minimal(base_size=11) +
+  theme(
+    #axis.title = element_blank()
+    axis.title = element_text(
+      size = 12,#14
+      ),
+    panel.grid = element_blank()
+  ) +
+  ggtitle("HepatocytesKEGG enrichment")
+
+print(p)
+
+```
+```{r}
+
+## WGCNA analysis of stereo-seq liver  data 
+
+library(Seurat)
+library(WGCNA)
+library(dplyr)
+options(stringsAsFactors = FALSE)
+enableWGCNAThreads()
+hep <- subset(seurat_obj, subset = cell_type == "Hepatocytes")
+DefaultAssay(hep) <- "RNA"
+
+periportal  <- list(c("CPS1","ASS1","HAL","PCK1"))
+pericentral <- list(c("GLUL","CYP2E1","CYP1A2","AXIN2"))
+
+hep <- AddModuleScore(hep, features = periportal,  name = "periportal")
+hep <- AddModuleScore(hep, features = pericentral, name = "pericentral")
+
+hep$zonation_axis <- hep$pericentral1 - hep$periportal1
+hep$zonation_pt <- (hep$zonation_axis - min(hep$zonation_axis)) /
+  (max(hep$zonation_axis) - min(hep$zonation_axis))
+#hep$zonation_pt
+##Use variable genes to reduce memory.
+hep <- FindVariableFeatures(hep, nfeatures = 3000) ## hep
+genes_use <- VariableFeatures(hep)
+genes_use
+datExpr <- t(as.matrix(GetAssayData(hep, slot = "data")[genes_use, ]))  # cells/spots x genes
+datTraits <- data.frame(zonation_pt = hep$zonation_pt)
+##Quality check:
+gsg <- goodSamplesGenes(datExpr, verbose = 3)
+if (!gsg$allOK) {
+  datExpr <- datExpr[gsg$goodSamples, gsg$goodGenes]
+  datTraits <- datTraits[gsg$goodSamples, , drop = FALSE]
+}
+##3) Pick soft-threshold power (important)
+powers <- 1:20
+#sft <- pickSoftThreshold(datExpr, powerVector = powers, verbose = 0)
+
+# Choose one power (often 6–12 for signed networks)
+softPower <- 8
+#softPower <- 20
+##4. Detect modules
+adj <- adjacency(datExpr, power = softPower, type = "signed")
+TOM <- TOMsimilarity(adj)
+dissTOM <- 1 - TOM
+
+geneTree <- hclust(as.dist(dissTOM), method = "average")
+library(ggplot2)
+minModuleSize <- 14
+dynamicMods <- cutreeDynamic(
+  dendro = geneTree, distM = dissTOM,
+  deepSplit = 2, pamRespectsDendro = FALSE,
+  minClusterSize = minModuleSize
+)
+#datExpr
+#hep@meta.data$
+moduleColors <- labels2colors(dynamicMods)
+
+# Plot dendrogram + colors (like your figure)
+#P1 <- plotDendroAndColors(geneTree, moduleColors, "Module colors",
+                   # dendroLabels = FALSE, hang = 0.03,
+                    #addGuide = TRUE, guideHang = 0.05)
+#P1
+
+par(
+  font.axis = 2,      # bold tick labels
+  font.lab  = 2,      # bold axis label
+  font.main = 2,      # bold title
+  cex.axis = 1.0,     # y-axis tick size
+  cex.lab  = 1.5,     # Height label size
+  cex.main = 1.6,     # title size
+  las = 1,            # horizontal y-axis tick labels
+  mgp = c(4.2, 1.0, 0) # moves "Height" away from tick labels
+)
+
+plotDendroAndColors(
+  geneTree,
+  moduleColors,
+  groupLabels = "Module colors",
+  dendroLabels = FALSE,
+  hang = 0.03,
+  addGuide = TRUE,
+  guideHang = 0.05,
+  main = "Cluster Dendrogram",
+  marAll = c(2, 8, 4, 2),
+  colorHeight = 0.8,
+  cex.colorLabels = 1.5,
+  
+)
+
+```
+```{r}
+tca_genes   <- c("CS","ACO2","SDHA","FH")
+keto_genes  <- c("HMGCS2","BDH1")
+gng_genes   <- c("PCK1","G6PC")
+urea_genes  <- c("ASS1","CPS1")
+
+gene_sets <- list(
+  "TCA cycle (CV)" = tca_genes,
+  "Ketogenesis (CV)" = keto_genes,
+  "Gluconeogenesis (PV)" = gng_genes,
+  "Urea cycle (PV)" = urea_genes
+)
+##Build a genes × CV→PV bins matrix (mean expression per bin)
+
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Matrix)
+
+DefaultAssay(seurat_obj) <- "RNA"
+mat <- GetAssayData(seurat_obj, slot = "data")  # log-normalized
+
+# ✅ Correct direction: high=CV, low=PV  → make CV→PV axis low=CV, high=PV
+seurat_obj$zonation_cv2pv <- max(seurat_obj$zonation_pt, na.rm=TRUE) - seurat_obj$zonation_pt
+
+n_bins <- 9
+seurat_obj$zbin9 <- cut(
+  seurat_obj$zonation_cv2pv,
+  breaks = seq(min(seurat_obj$zonation_cv2pv, na.rm=TRUE),
+               max(seurat_obj$zonation_cv2pv, na.rm=TRUE),
+               length.out = n_bins + 1),
+  include.lowest = TRUE,
+  labels = as.character(1:n_bins)
+)
+
+# all genes (keep only those present)
+genes_all <- unique(unlist(gene_sets))
+genes_all <- intersect(genes_all, rownames(seurat_obj))
+genes_all
+
+##Create the mean-by-bin matrix:
+cells_by_bin <- split(colnames(seurat_obj), seurat_obj$zbin9)
+
+mean_by_bin <- sapply(names(cells_by_bin), function(b){
+  cells <- cells_by_bin[[b]]
+  if (length(cells) == 0) return(rep(NA_real_, length(genes_all)))
+  Matrix::rowMeans(mat[genes_all, cells, drop=FALSE])
+})
+rownames(mean_by_bin) <- genes_all
+rownames(mean_by_bin)
+colnames(mean_by_bin) <- paste0("Bin", names(cells_by_bin))  # Bin1..Bin9 (CV→PV)
+##Row-scale (z-score per gene) for a nice heatmap:
+
+zmat <- t(scale(t(mean_by_bin)))
+zmat[is.na(zmat)] <- 0
+##Make a pathway-ordered heatmap (with PV/CV direction labels)
+#Create annotation table so genes are grouped by pathway:
+gene2path <- bind_rows(lapply(names(gene_sets), function(p){
+  tibble(Pathway = p, Gene = intersect(gene_sets[[p]], rownames(zmat)))
+}))
+
+# order genes by pathway (and within pathway keep your listed order)
+gene_order <- gene2path %>%
+  group_by(Pathway) %>%
+  summarise(Gene = list(Gene), .groups="drop") %>%
+  pull(Gene) %>%
+  unlist()
+
+zmat2 <- zmat[gene_order, , drop=FALSE]
+##Plot
+hm_long <- as.data.frame(zmat2) %>%
+  tibble::rownames_to_column("Gene") %>%
+  tidyr::pivot_longer(cols = starts_with("Bin"), names_to="Bin", values_to="Z") %>%
+  left_join(gene2path, by="Gene")
+
+hm_long$Bin <- factor(hm_long$Bin, levels = paste0("Bin", 1:9))
+hm_long$Gene <- factor(hm_long$Gene, levels = rev(gene_order))
+p <- ggplot(hm_long, aes(x=Bin, y=Gene, fill=Z)) +
+  
+  geom_tile() +
+  
+  facet_grid(Pathway ~ ., scales="free_y", space="free_y") +
+  
+  scale_fill_gradient2(
+    low="#2166AC",
+    mid="white",
+    high="#B2182B",
+    midpoint=0,
+    name="Z-score"
+  ) +
+  
+  # ✅ change Bin1..Bin9 → 1..9
+  scale_x_discrete(
+    labels = 1:9
+  ) +
+  
+  theme_minimal(base_size=12) +
+  
+  theme(
+    panel.grid = element_blank(),
+    
+    axis.title = element_blank(),
+    
+    strip.text.y = element_text(
+      angle = 0,
+      size = 12
+    ),
+    
+    axis.text.x = element_text(
+      angle = 0,
+      size = 10,
+      ),
+    
+    axis.text.y = element_text(
+      size = 10,
+      ),
+    
+    plot.title = element_text(
+      size = 12,
+      hjust = 0.5
+    ),
+    
+    legend.title = element_text(
+      size = 12,
+      ),
+    
+    legend.text = element_text(
+      size = 12,
+      )
+  ) +
+  
+  labs(
+    title = "Zonated pathway marker genes (CV \u2192 PV)"
+  )
+p
+p <- p +
+  theme(
+    axis.text.y = element_text(
+      color = "black",
+      size = 11,
+      ),
+    axis.text.x = element_text(
+      color = "black",
+      size = 11,
+      ),
+    axis.title = element_blank(),
+    plot.title = element_text(
+      color = "black",
+      ),
+    legend.title = element_text(
+      color = "black",
+      ),
+    legend.text = element_text(
+      
+    )
+  )
+
+#Add explicit direction labels under the bins:
+p + annotate("text", x=1, y=-Inf, label="CV", vjust=-0.8, size=5, inherit.aes=FALSE) +
+  annotate("text", x=9, y=-Inf, label="PV", vjust=-0.8, size=5, inherit.aes=FALSE)
+#ggsave("ZonatedPathways_CV_to_PV_heatmap_4815.svg", p, width=5.0, height=5.2, dpi=400)
+#ggsave("ZonatedPathways_CV_to_PV_heatmap_4826.svg", p, width=4.8, height=4.2, dpi=600)
+
+```
+
