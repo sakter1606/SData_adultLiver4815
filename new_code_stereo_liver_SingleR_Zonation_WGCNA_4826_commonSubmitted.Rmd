@@ -111,8 +111,7 @@ seurat_obj$zonation_pt <- (seurat_obj$zonation_axis - min(seurat_obj$zonation_ax
   (max(seurat_obj$zonation_axis) - min(seurat_obj$zonation_axis))
 
 seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4815_all.rds") ## saving the seurat object after creating and calculating zonation, then in 2nd part spatial visualization 
-#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds")
-#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds")
+#seurat_obj<-readRDS("seurat_objF_celltype_singleRanno_4826_all.rds") ##Perform the exact same analysis with this data too
 ## do the same for any cell type or 
 hep <- subset(seurat_obj, subset = cell_type == "Hepatocytes")
 Assays(hep)
